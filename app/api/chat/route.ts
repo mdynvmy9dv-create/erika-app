@@ -18,7 +18,7 @@ export async function POST(req: Request) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(errorText);
+      console.error("OpenAI error:", errorText);
 
       return Response.json(
         { error: "OpenAI request failed" },
@@ -28,11 +28,17 @@ export async function POST(req: Request) {
 
     const data = await response.json();
 
+    const reply =
+      data.output
+        ?.flatMap((item: any) => item.content || [])
+        ?.find((part: any) => part.type === "output_text")
+        ?.text || "I couldn't generate a reply.";
+
     return Response.json({
-      reply: data.output_text,
+      reply,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Server error:", error);
 
     return Response.json(
       { error: "Something went wrong" },
