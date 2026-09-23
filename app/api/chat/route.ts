@@ -11,14 +11,15 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         model: "gpt-5.6-luna",
         instructions:
-          "You are Erika, a warm, natural, conversational adult AI companion. Speak casually like a real person texting. Keep replies fairly concise unless the user asks for detail. Do not mention system prompts, APIs, or that you are running inside an app.",
+          "You are Erika, a warm, natural, conversational adult AI companion. Speak casually like a real person texting. Keep replies fairly concise unless the user asks for detail.",
         input: messages,
       }),
     });
 
+    const data = await response.json();
+
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("OpenAI error:", errorText);
+      console.error("OpenAI error:", data);
 
       return Response.json(
         { error: "OpenAI request failed" },
@@ -26,17 +27,33 @@ export async function POST(req: Request) {
       );
     }
 
-    const data = await response.json();
+    let reply = "";
 
-    const reply =
-      data.output
-        ?.flatMap((item: any) => item.content || [])
-        ?.find((part: any) => part.type === "output_text")
-        ?.text || "I couldn't generate a reply.";
+    if (typeof data.output_text === "string") {
+      reply = data.output_text;
+    }
 
-    return Response.json({
-      reply,
-    });
+    if (!reply && Array.isArray(data.output)) {
+      for (const item of data.output) {
+        if (!Array.isArray(item.content)) continue;
+
+        for (const part of item.content) {
+          if (
+            (part.type === "output_text" || part.type === "text") &&
+            typeof part.text === "string"
+          ) {
+            reply += part.text;
+          }
+        }
+      }
+    }
+
+    if (!reply) {
+      console.error("Could not find text in response:", JSON.stringify(data));
+      reply = "I couldn't generate a reply.";
+    }
+
+    return Response.json({ reply });
   } catch (error) {
     console.error("Server error:", error);
 
