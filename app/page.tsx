@@ -16,28 +16,68 @@ export default function Home() {
   ]);
 
   const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function sendMessage() {
+  async function sendMessage() {
     const cleaned = input.trim();
-    if (!cleaned) return;
+    if (!cleaned || loading) return;
 
-    setMessages((current) => [
-      ...current,
-      { role: "user", text: cleaned },
-      {
-        role: "assistant",
-        text: "I’m not connected to the AI yet, but the chat screen is working.",
-      },
-    ]);
+    const newMessages = [
+      ...messages,
+      { role: "user" as const, text: cleaned },
+    ];
 
+    setMessages(newMessages);
     setInput("");
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: newMessages.map((message) => ({
+            role: message.role,
+            content: message.text,
+          })),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Request failed");
+      }
+
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: data.reply || "Something went wrong.",
+        },
+      ]);
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: "I had trouble connecting. Try again.",
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <main className="min-h-screen bg-black text-white flex flex-col">
       <header className="border-b border-white/10 px-4 py-4">
         <h1 className="text-xl font-semibold">Erika</h1>
-        <p className="text-sm text-white/50">online</p>
+        <p className="text-sm text-white/50">
+          {loading ? "typing..." : "online"}
+        </p>
       </header>
 
       <section className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
@@ -77,7 +117,8 @@ export default function Home() {
 
           <button
             onClick={sendMessage}
-            className="rounded-full bg-white px-5 py-3 font-medium text-black"
+            disabled={loading}
+            className="rounded-full bg-white px-5 py-3 font-medium text-black disabled:opacity-50"
           >
             Send
           </button>
