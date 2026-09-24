@@ -1,28 +1,24 @@
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const replicateToken = process.env.REPLICATE_API_TOKEN;
 
-const FACE_LORA = "mdynvmy9dv-create/erikaface";
-const BODY_LORA = "mdynvmy9dv-create/erikabody";
+const FACE_LORA_URL =
+  "https://pub-6c78a23ee9fc455dac17546e08d02ce9.r2.dev/erikaface.safetensors";
 
-// These are the trigger words you trained with.
-const FACE_TRIGGER = "ERIKAFACE";
-const BODY_TRIGGER = "ERIKABODY";
-
-async function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const BODY_LORA_URL =
+  "https://pub-6c78a23ee9fc455dac17546e08d02ce9.r2.dev/erikabody.safetensors";
 
 export async function POST(req: Request) {
   try {
     const { prompt } = await req.json();
 
-    if (!prompt || typeof prompt !== "string") {
+    if (!prompt) {
       return Response.json(
         { error: "Prompt is required" },
         { status: 400 }
       );
     }
+
+    const replicateToken = process.env.REPLICATE_API_TOKEN;
 
     if (!replicateToken) {
       return Response.json(
@@ -38,42 +34,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Get latest version of the base model that supports multiple LoRAs
-    const baseModelResponse = await fetch(
-      "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora",
-      {
-        headers: {
-          Authorization: `Bearer ${replicateToken}`,
-        },
-      }
-    );
-
-    if (!baseModelResponse.ok) {
-      const text = await baseModelResponse.text();
-      console.error("Replicate base model lookup error:", text);
-
-      return Response.json(
-        { error: "Could not load base Flux LoRA model" },
-        { status: 500 }
-      );
-    }
-
-    const baseModelData = await baseModelResponse.json();
-    const version = baseModelData.latest_version?.id;
-
-    if (!version) {
-      console.error("No base model version found:", baseModelData);
-
-      return Response.json(
-        { error: "No base model version found" },
-        { status: 500 }
-      );
-    }
-
-    // IMPORTANT:
-    // Include BOTH trigger words in the prompt so both LoRAs activate.
-    const finalPrompt = `${FACE_TRIGGER}, ${BODY_TRIGGER}, ${prompt}`;
-
+    // Generate image using direct public LoRA weight URLs
     const predictionResponse = await fetch(
       "https://api.replicate.com/v1/predictions",
       {
@@ -84,17 +45,16 @@ export async function POST(req: Request) {
           Prefer: "wait",
         },
         body: JSON.stringify({
-          version,
+          model: "black-forest-labs/flux-dev-lora",
           input: {
-            prompt: finalPrompt,
+            prompt: `ERIKAFACE, ERIKABODY, ${prompt}`,
 
-            // Main LoRA = face
-            lora_weights: FACE_LORA,
-            lora_scale: 1.0,
+            // direct URLs to your uploaded LoRA files
+            lora_weights: FACE_LORA_URL,
+            extra_lora: BODY_LORA_URL,
 
-            // Extra LoRA = body
-            extra_lora: BODY_LORA,
-            extra_lora_scale: 1.0,
+            lora_scale: 1,
+            extra_lora_scale: 1,
 
             aspect_ratio: "4:5",
             num_outputs: 1,
@@ -102,8 +62,8 @@ export async function POST(req: Request) {
             guidance: 3,
             output_format: "jpg",
             output_quality: 95,
-            go_fast: false,
             megapixels: "1",
+            go_fast: false,
           },
         }),
       }
@@ -111,6 +71,7 @@ export async function POST(req: Request) {
 
     if (!predictionResponse.ok) {
       const text = await predictionResponse.text();
+
       console.error("Replicate prediction error:", text);
 
       return Response.json(
@@ -121,8 +82,8 @@ export async function POST(req: Request) {
 
     let prediction = await predictionResponse.json();
 
-    // Poll until finished
-    for (let i = 0; i < 60; i++) {
+    // Poll until done
+    for (let i = 0; i < 45; i++) {
       if (
         prediction.status === "succeeded" ||
         prediction.status === "failed" ||
@@ -131,7 +92,7 @@ export async function POST(req: Request) {
         break;
       }
 
-      await sleep(1000);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
       const checkResponse = await fetch(
         `https://api.replicate.com/v1/predictions/${prediction.id}`,
@@ -158,8 +119,8 @@ export async function POST(req: Request) {
 
       return Response.json(
         {
-          error: prediction.error || "Erika photo did not finish generating",
-          prediction,
+          error: "Erika photo did not finish generating",
+          details: prediction?.error || prediction?.status || null,
         },
         { status: 500 }
       );
@@ -176,7 +137,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Download image from Replicate
+    // Download the generated image
     const imageResponse = await fetch(replicateImageUrl);
 
     if (!imageResponse.ok) {
@@ -193,7 +154,7 @@ export async function POST(req: Request) {
 
     const imageBytes = await imageResponse.arrayBuffer();
 
-    // Save permanently to Supabase storage
+    // Save permanently to Supabase Storage
     const fileName = `erika-${Date.now()}-${crypto.randomUUID()}.jpg`;
 
     const uploadResponse = await fetch(
@@ -212,10 +173,13 @@ export async function POST(req: Request) {
 
     if (!uploadResponse.ok) {
       const uploadError = await uploadResponse.text();
+
       console.error("Supabase photo upload error:", uploadError);
 
       return Response.json(
-        { error: "Could not save Erika photo permanently" },
+        {
+          error: "Could not save Erika photo permanently",
+        },
         { status: 500 }
       );
     }
@@ -227,9 +191,6 @@ export async function POST(req: Request) {
       metadata: {
         replicate_prediction_id: prediction.id,
         prompt,
-        final_prompt: finalPrompt,
-        face_lora: FACE_LORA,
-        body_lora: BODY_LORA,
         storage_file: fileName,
         permanent: true,
       },
