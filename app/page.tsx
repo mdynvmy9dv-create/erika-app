@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Message =
   | {
@@ -15,13 +15,8 @@ type Message =
     };
 
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      type: "text",
-      text: "Hey. I’m Erika. What are you up to?",
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -33,69 +28,206 @@ export default function Home() {
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  // -------------------------
+  // LOAD SAVED CHAT HISTORY
+  // -------------------------
+
+  useEffect(() => {
+    async function loadHistory() {
+      try {
+        const response = await fetch("/api/messages", {
+          cache: "no-store",
+        });
+
+        const data = await response.json();
+
+        if (
+          response.ok &&
+          Array.isArray(data.messages) &&
+          data.messages.length > 0
+        ) {
+          const loaded: Message[] = data.messages
+            .map((message: any) => {
+              if (
+                message.type === "text" &&
+                (message.role === "user" ||
+                  message.role === "assistant")
+              ) {
+                return {
+                  role: message.role,
+                  type: "text",
+                  text: message.text || "",
+                } as Message;
+              }
+
+              if (
+                message.type === "image" &&
+                message.role === "assistant" &&
+                message.image
+              ) {
+                return {
+                  role: "assistant",
+                  type: "image",
+                  image: message.image,
+                } as Message;
+              }
+
+              return null;
+            })
+            .filter(Boolean) as Message[];
+
+          setMessages(loaded);
+        } else {
+          setMessages([
+            {
+              role: "assistant",
+              type: "text",
+              text: "Hey. I’m Erika. What are you up to?",
+            },
+          ]);
+        }
+      } catch (error) {
+        console.error("Could not load history:", error);
+
+        setMessages([
+          {
+            role: "assistant",
+            type: "text",
+            text: "Hey. I’m Erika. What are you up to?",
+          },
+        ]);
+      } finally {
+        setHistoryLoaded(true);
+      }
+    }
+
+    loadHistory();
+  }, []);
+
+  // -------------------------
+  // SAVE ONE MESSAGE
+  // -------------------------
+
+  async function saveMessage(message: Message) {
+    try {
+      await fetch("/api/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          role: message.role,
+          type: message.type,
+
+          text:
+            message.type === "text"
+              ? message.text
+              : null,
+
+          image:
+            message.type === "image"
+              ? message.image
+              : null,
+        }),
+      });
+    } catch (error) {
+      console.error("Could not save message:", error);
+    }
+  }
+
+  // -------------------------
+  // TEXT CHAT
+  // -------------------------
+
   async function sendMessage() {
     const cleaned = input.trim();
 
     if (!cleaned || loading) return;
 
-    const newMessages: Message[] = [
-      ...messages,
-      {
-        role: "user",
-        type: "text",
-        text: cleaned,
-      },
-    ];
+    const userMessage: Message = {
+      role: "user",
+      type: "text",
+      text: cleaned,
+    };
+
+    const newMessages = [...messages, userMessage];
 
     setMessages(newMessages);
     setInput("");
     setLoading(true);
 
+    // Save what you said
+    await saveMessage(userMessage);
+
     try {
+      const textHistory = newMessages
+        .filter((message) => message.type === "text")
+        .slice(-40)
+        .map((message) => ({
+          role: message.role,
+          content:
+            message.type === "text"
+              ? message.text
+              : "",
+        }));
+
       const chatResponse = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          messages: newMessages
-            .filter((message) => message.type === "text")
-            .map((message) => ({
-              role: message.role,
-              content: message.type === "text" ? message.text : "",
-            })),
+          messages: textHistory,
         }),
       });
 
       const chatData = await chatResponse.json();
 
       if (!chatResponse.ok) {
-        throw new Error(chatData.error || "Chat request failed");
+        throw new Error(
+          chatData.error || "Chat request failed"
+        );
       }
 
+      // -------------------------
+      // NORMAL TEXT RESPONSE
+      // -------------------------
+
       if (chatData.type === "text") {
+        const assistantMessage: Message = {
+          role: "assistant",
+          type: "text",
+          text: chatData.message,
+        };
+
         setMessages((current) => [
           ...current,
-          {
-            role: "assistant",
-            type: "text",
-            text: chatData.message,
-          },
+          assistantMessage,
         ]);
+
+        await saveMessage(assistantMessage);
 
         return;
       }
 
+      // -------------------------
+      // PHOTO RESPONSE
+      // -------------------------
+
       if (chatData.type === "photo") {
         if (chatData.message) {
+          const beforePhotoMessage: Message = {
+            role: "assistant",
+            type: "text",
+            text: chatData.message,
+          };
+
           setMessages((current) => [
             ...current,
-            {
-              role: "assistant",
-              type: "text",
-              text: chatData.message,
-            },
+            beforePhotoMessage,
           ]);
+
+          await saveMessage(beforePhotoMessage);
         }
 
         const photoResponse = await fetch("/api/photo", {
@@ -110,20 +242,28 @@ export default function Home() {
 
         const photoData = await photoResponse.json();
 
-        if (!photoResponse.ok || !photoData.image) {
+        if (
+          !photoResponse.ok ||
+          !photoData.image
+        ) {
           throw new Error(
-            photoData.error || "Photo generation failed"
+            photoData.error ||
+              "Photo generation failed"
           );
         }
 
+        const imageMessage: Message = {
+          role: "assistant",
+          type: "image",
+          image: photoData.image,
+        };
+
         setMessages((current) => [
           ...current,
-          {
-            role: "assistant",
-            type: "image",
-            image: photoData.image,
-          },
+          imageMessage,
         ]);
+
+        await saveMessage(imageMessage);
 
         return;
       }
@@ -145,31 +285,40 @@ export default function Home() {
     }
   }
 
+  // -------------------------
+  // LIVE VOICE
+  // -------------------------
+
   async function startVoice() {
     if (voiceActive || voiceConnecting) return;
 
     setVoiceConnecting(true);
 
     try {
-      // 1. Get temporary Realtime token from our Vercel backend
-      const tokenResponse = await fetch("/api/realtime");
+      const tokenResponse =
+        await fetch("/api/realtime");
 
-      const tokenData = await tokenResponse.json();
+      const tokenData =
+        await tokenResponse.json();
 
-      if (!tokenResponse.ok || !tokenData.value) {
+      if (
+        !tokenResponse.ok ||
+        !tokenData.value
+      ) {
         throw new Error(
-          tokenData.error || "Could not get voice token"
+          tokenData.error ||
+            "Could not get voice token"
         );
       }
 
       const ephemeralKey = tokenData.value;
 
-      // 2. Create WebRTC connection
       const pc = new RTCPeerConnection();
       peerRef.current = pc;
 
-      // 3. Play Erika's voice
-      const audio = document.createElement("audio");
+      const audio =
+        document.createElement("audio");
+
       audio.autoplay = true;
       audioRef.current = audio;
 
@@ -177,11 +326,13 @@ export default function Home() {
         audio.srcObject = event.streams[0];
 
         audio.play().catch((error) => {
-          console.error("Audio play error:", error);
+          console.error(
+            "Audio play error:",
+            error
+          );
         });
       };
 
-      // 4. Ask iPhone for microphone access
       const micStream =
         await navigator.mediaDevices.getUserMedia({
           audio: true,
@@ -193,27 +344,32 @@ export default function Home() {
         pc.addTrack(track, micStream);
       }
 
-      // 5. Create realtime event channel
-      const dataChannel = pc.createDataChannel("oai-events");
+      const dataChannel =
+        pc.createDataChannel("oai-events");
 
       dataChannel.onopen = () => {
-        console.log("Realtime voice channel connected");
+        console.log(
+          "Realtime voice connected"
+        );
       };
 
       dataChannel.onerror = (event) => {
-        console.error("Realtime data channel error:", event);
+        console.error(
+          "Realtime channel error:",
+          event
+        );
       };
 
-      // 6. Create WebRTC offer
       const offer = await pc.createOffer();
 
       await pc.setLocalDescription(offer);
 
       if (!offer.sdp) {
-        throw new Error("Missing WebRTC offer");
+        throw new Error(
+          "Missing WebRTC offer"
+        );
       }
 
-      // 7. Connect directly to OpenAI using TEMPORARY key
       const realtimeResponse = await fetch(
         "https://api.openai.com/v1/realtime/calls",
         {
@@ -227,11 +383,14 @@ export default function Home() {
       );
 
       if (!realtimeResponse.ok) {
-        const errorText = await realtimeResponse.text();
+        const errorText =
+          await realtimeResponse.text();
+
         throw new Error(errorText);
       }
 
-      const answerSdp = await realtimeResponse.text();
+      const answerSdp =
+        await realtimeResponse.text();
 
       await pc.setRemoteDescription({
         type: "answer",
@@ -240,13 +399,14 @@ export default function Home() {
 
       setVoiceActive(true);
     } catch (error) {
-      console.error("Voice connection error:", error);
+      console.error(
+        "Voice connection error:",
+        error
+      );
 
       stopVoice();
 
-      alert(
-        "Voice couldn't connect yet. We'll check the voice route next."
-      );
+      alert("Voice couldn't connect.");
     } finally {
       setVoiceConnecting(false);
     }
@@ -276,11 +436,28 @@ export default function Home() {
     setVoiceConnecting(false);
   }
 
+  // -------------------------
+  // SCREEN
+  // -------------------------
+
+  if (!historyLoaded) {
+    return (
+      <main className="min-h-screen bg-black text-white flex items-center justify-center">
+        <p className="text-white/50">
+          Loading Erika...
+        </p>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-black text-white flex flex-col">
+
       <header className="border-b border-white/10 px-4 py-4 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Erika</h1>
+          <h1 className="text-xl font-semibold">
+            Erika
+          </h1>
 
           <p className="text-sm text-white/50">
             {voiceConnecting
@@ -294,7 +471,11 @@ export default function Home() {
         </div>
 
         <button
-          onClick={voiceActive ? stopVoice : startVoice}
+          onClick={
+            voiceActive
+              ? stopVoice
+              : startVoice
+          }
           disabled={voiceConnecting}
           className={
             voiceActive
@@ -311,10 +492,14 @@ export default function Home() {
       </header>
 
       <section className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
+
         {messages.map((message, index) => {
           if (message.type === "image") {
             return (
-              <div key={index} className="flex justify-start">
+              <div
+                key={index}
+                className="flex justify-start"
+              >
                 <img
                   src={message.image}
                   alt="Erika"
@@ -345,13 +530,18 @@ export default function Home() {
             </div>
           );
         })}
+
       </section>
 
       <footer className="border-t border-white/10 p-3">
+
         <div className="flex gap-2">
+
           <input
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) =>
+              setInput(e.target.value)
+            }
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 sendMessage();
@@ -368,8 +558,11 @@ export default function Home() {
           >
             Send
           </button>
+
         </div>
+
       </footer>
+
     </main>
   );
 }
