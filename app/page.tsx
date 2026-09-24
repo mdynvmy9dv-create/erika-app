@@ -16,12 +16,14 @@ type Message =
       source?: "photo";
     };
 
+type Activity = "idle" | "typing" | "photo";
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
 
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [activity, setActivity] = useState<Activity>("idle");
 
   const [voiceActive, setVoiceActive] = useState(false);
   const [voiceConnecting, setVoiceConnecting] = useState(false);
@@ -32,6 +34,21 @@ export default function Home() {
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
 
   const savedVoiceItemsRef = useRef<Set<string>>(new Set());
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  // --------------------------------------------------
+  // AUTO SCROLL
+  // --------------------------------------------------
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+    });
+  }, [messages, activity]);
+
+  // --------------------------------------------------
+  // LOAD SAVED HISTORY
+  // --------------------------------------------------
 
   useEffect(() => {
     async function loadHistory() {
@@ -109,6 +126,10 @@ export default function Home() {
     loadHistory();
   }, []);
 
+  // --------------------------------------------------
+  // SAVE MESSAGE
+  // --------------------------------------------------
+
   async function saveMessage(
     message: Message,
     metadata: Record<string, any> = {}
@@ -122,19 +143,24 @@ export default function Home() {
         body: JSON.stringify({
           role: message.role,
           type: message.type,
+
           text:
             message.type === "text"
               ? message.text
               : null,
+
           image:
             message.type === "image"
               ? message.image
               : null,
+
           source:
             message.type === "image"
               ? "photo"
               : message.source || "text",
+
           conversation_id: "main",
+
           metadata,
         }),
       });
@@ -143,10 +169,14 @@ export default function Home() {
     }
   }
 
+  // --------------------------------------------------
+  // TEXT CHAT
+  // --------------------------------------------------
+
   async function sendMessage() {
     const cleaned = input.trim();
 
-    if (!cleaned || loading) return;
+    if (!cleaned || activity !== "idle") return;
 
     const userMessage: Message = {
       role: "user",
@@ -159,7 +189,7 @@ export default function Home() {
 
     setMessages(newMessages);
     setInput("");
-    setLoading(true);
+    setActivity("typing");
 
     await saveMessage(userMessage);
 
@@ -193,6 +223,10 @@ export default function Home() {
         );
       }
 
+      // -------------------------
+      // NORMAL TEXT
+      // -------------------------
+
       if (chatData.type === "text") {
         const assistantMessage: Message = {
           role: "assistant",
@@ -211,6 +245,10 @@ export default function Home() {
         return;
       }
 
+      // -------------------------
+      // PHOTO
+      // -------------------------
+
       if (chatData.type === "photo") {
         if (chatData.message) {
           const beforePhotoMessage: Message = {
@@ -227,6 +265,8 @@ export default function Home() {
 
           await saveMessage(beforePhotoMessage);
         }
+
+        setActivity("photo");
 
         const photoResponse = await fetch("/api/photo", {
           method: "POST",
@@ -286,21 +326,32 @@ export default function Home() {
         },
       ]);
     } finally {
-      setLoading(false);
+      setActivity("idle");
     }
   }
 
+  // --------------------------------------------------
+  // REALTIME VOICE EVENTS
+  // --------------------------------------------------
+
   async function handleRealtimeEvent(event: any) {
     try {
-      // Save what YOU say during the call
+      // -------------------------
+      // YOUR VOICE
+      // -------------------------
+
       if (
         event.type ===
           "conversation.item.input_audio_transcription.completed" &&
         event.transcript
       ) {
+        const transcript = event.transcript.trim();
+
+        if (!transcript) return;
+
         const key =
           event.item_id ||
-          `user-${event.transcript}`;
+          `user-${transcript}`;
 
         if (savedVoiceItemsRef.current.has(key)) {
           return;
@@ -308,26 +359,30 @@ export default function Home() {
 
         savedVoiceItemsRef.current.add(key);
 
-        const voiceUserMessage: Message = {
+        const message: Message = {
           role: "user",
           type: "text",
-          text: event.transcript,
+          text: transcript,
           source: "voice",
         };
 
         setMessages((current) => [
           ...current,
-          voiceUserMessage,
+          message,
         ]);
 
-        await saveMessage(voiceUserMessage, {
-          realtime_item_id: event.item_id || null,
+        await saveMessage(message, {
+          realtime_item_id:
+            event.item_id || null,
         });
 
         return;
       }
 
-      // Save what ERIKA says during the call
+      // -------------------------
+      // ERIKA'S VOICE
+      // -------------------------
+
       if (
         (
           event.type ===
@@ -337,10 +392,14 @@ export default function Home() {
         ) &&
         event.transcript
       ) {
+        const transcript = event.transcript.trim();
+
+        if (!transcript) return;
+
         const key =
           event.item_id ||
           event.response_id ||
-          `assistant-${event.transcript}`;
+          `assistant-${transcript}`;
 
         if (savedVoiceItemsRef.current.has(key)) {
           return;
@@ -348,20 +407,22 @@ export default function Home() {
 
         savedVoiceItemsRef.current.add(key);
 
-        const voiceAssistantMessage: Message = {
+        const message: Message = {
           role: "assistant",
           type: "text",
-          text: event.transcript,
+          text: transcript,
           source: "voice",
         };
 
         setMessages((current) => [
           ...current,
-          voiceAssistantMessage,
+          message,
         ]);
 
-        await saveMessage(voiceAssistantMessage, {
-          realtime_item_id: event.item_id || null,
+        await saveMessage(message, {
+          realtime_item_id:
+            event.item_id || null,
+
           realtime_response_id:
             event.response_id || null,
         });
@@ -376,10 +437,16 @@ export default function Home() {
     }
   }
 
+  // --------------------------------------------------
+  // START VOICE
+  // --------------------------------------------------
+
   async function startVoice() {
     if (voiceActive || voiceConnecting) return;
 
     setVoiceConnecting(true);
+
+    savedVoiceItemsRef.current.clear();
 
     try {
       const tokenResponse =
@@ -401,12 +468,23 @@ export default function Home() {
       const ephemeralKey = tokenData.value;
 
       const pc = new RTCPeerConnection();
+
       peerRef.current = pc;
+
+      // -------------------------
+      // ERIKA AUDIO OUTPUT
+      // -------------------------
 
       const audio =
         document.createElement("audio");
 
       audio.autoplay = true;
+
+      audio.setAttribute(
+        "playsinline",
+        "true"
+      );
+
       audioRef.current = audio;
 
       pc.ontrack = (event) => {
@@ -420,9 +498,20 @@ export default function Home() {
         });
       };
 
+      // -------------------------
+      // IPHONE MICROPHONE
+      //
+      // These settings reduce Erika hearing
+      // herself through the speaker.
+      // -------------------------
+
       const micStream =
         await navigator.mediaDevices.getUserMedia({
-          audio: true,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
         });
 
       micStreamRef.current = micStream;
@@ -430,6 +519,10 @@ export default function Home() {
       for (const track of micStream.getTracks()) {
         pc.addTrack(track, micStream);
       }
+
+      // -------------------------
+      // REALTIME DATA CHANNEL
+      // -------------------------
 
       const dataChannel =
         pc.createDataChannel("oai-events");
@@ -442,17 +535,19 @@ export default function Home() {
         );
       };
 
-      dataChannel.onmessage = async (event) => {
+      dataChannel.onmessage = async (
+        messageEvent
+      ) => {
         try {
           const realtimeEvent =
-            JSON.parse(event.data);
+            JSON.parse(messageEvent.data);
 
           await handleRealtimeEvent(
             realtimeEvent
           );
         } catch (error) {
           console.error(
-            "Realtime message parse error:",
+            "Realtime event parse error:",
             error
           );
         }
@@ -464,6 +559,10 @@ export default function Home() {
           event
         );
       };
+
+      // -------------------------
+      // WEBRTC CONNECTION
+      // -------------------------
 
       const offer = await pc.createOffer();
 
@@ -479,19 +578,23 @@ export default function Home() {
         "https://api.openai.com/v1/realtime/calls",
         {
           method: "POST",
+
           body: offer.sdp,
+
           headers: {
-            Authorization: `Bearer ${ephemeralKey}`,
-            "Content-Type": "application/sdp",
+            Authorization:
+              `Bearer ${ephemeralKey}`,
+
+            "Content-Type":
+              "application/sdp",
           },
         }
       );
 
       if (!realtimeResponse.ok) {
-        const errorText =
-          await realtimeResponse.text();
-
-        throw new Error(errorText);
+        throw new Error(
+          await realtimeResponse.text()
+        );
       }
 
       const answerSdp =
@@ -511,15 +614,24 @@ export default function Home() {
 
       stopVoice();
 
-      alert("Voice couldn't connect.");
+      alert(
+        "Voice couldn't connect. Try again."
+      );
     } finally {
       setVoiceConnecting(false);
     }
   }
 
+  // --------------------------------------------------
+  // STOP VOICE
+  // --------------------------------------------------
+
   function stopVoice() {
     if (micStreamRef.current) {
-      for (const track of micStreamRef.current.getTracks()) {
+      for (
+        const track of
+        micStreamRef.current.getTracks()
+      ) {
         track.stop();
       }
 
@@ -546,58 +658,132 @@ export default function Home() {
     setVoiceConnecting(false);
   }
 
+  // --------------------------------------------------
+  // LOADING SCREEN
+  // --------------------------------------------------
+
   if (!historyLoaded) {
     return (
-      <main className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-white/50">
-          Loading Erika...
-        </p>
+      <main className="min-h-[100dvh] bg-black text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-white/10 flex items-center justify-center text-2xl font-semibold">
+            E
+          </div>
+
+          <p className="text-white/50">
+            Loading Erika...
+          </p>
+        </div>
       </main>
     );
   }
 
-  return (
-    <main className="min-h-screen bg-black text-white flex flex-col">
-      <header className="border-b border-white/10 px-4 py-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">
-            Erika
-          </h1>
+  // --------------------------------------------------
+  // CALL SCREEN
+  // --------------------------------------------------
 
+  if (voiceActive || voiceConnecting) {
+    return (
+      <main className="min-h-[100dvh] bg-black text-white flex flex-col items-center justify-between px-6 py-14">
+
+        <div className="text-center">
           <p className="text-sm text-white/50">
+            Erika
+          </p>
+
+          <p className="mt-1 text-lg">
             {voiceConnecting
-              ? "connecting..."
-              : voiceActive
-              ? "voice connected"
-              : loading
-              ? "typing..."
-              : "online"}
+              ? "Connecting..."
+              : "Voice connected"}
+          </p>
+        </div>
+
+        <div className="flex flex-col items-center">
+          <div
+            className={
+              voiceActive
+                ? "h-40 w-40 rounded-full bg-white/10 flex items-center justify-center animate-pulse"
+                : "h-40 w-40 rounded-full bg-white/10 flex items-center justify-center"
+            }
+          >
+            <div className="h-32 w-32 rounded-full bg-white/10 flex items-center justify-center text-5xl font-semibold">
+              E
+            </div>
+          </div>
+
+          <p className="mt-8 text-white/50">
+            {voiceConnecting
+              ? "Starting call..."
+              : "Talk naturally"}
           </p>
         </div>
 
         <button
-          onClick={
-            voiceActive
-              ? stopVoice
-              : startVoice
-          }
-          disabled={voiceConnecting}
-          className={
-            voiceActive
-              ? "rounded-full bg-red-600 px-4 py-2 font-medium"
-              : "rounded-full bg-white/10 px-4 py-2 font-medium disabled:opacity-50"
-          }
+          onClick={stopVoice}
+          className="rounded-full bg-red-600 px-8 py-4 text-lg font-semibold"
         >
-          {voiceConnecting
-            ? "Connecting..."
-            : voiceActive
-            ? "End"
-            : "Call"}
+          End call
         </button>
+      </main>
+    );
+  }
+
+  // --------------------------------------------------
+  // NORMAL CHAT SCREEN
+  // --------------------------------------------------
+
+  return (
+    <main className="min-h-[100dvh] bg-black text-white flex flex-col">
+
+      {/* HEADER */}
+
+      <header className="sticky top-0 z-10 bg-black/90 backdrop-blur-xl border-b border-white/10 px-4 py-3">
+
+        <div className="flex items-center justify-between">
+
+          <div className="flex items-center gap-3">
+
+            <div className="h-11 w-11 rounded-full bg-white/10 flex items-center justify-center font-semibold">
+              E
+            </div>
+
+            <div>
+              <h1 className="font-semibold">
+                Erika
+              </h1>
+
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-green-500" />
+
+                <p className="text-xs text-white/50">
+                  {activity === "typing"
+                    ? "typing..."
+                    : activity === "photo"
+                    ? "taking a photo..."
+                    : "online"}
+                </p>
+              </div>
+            </div>
+
+          </div>
+
+          <button
+            onClick={startVoice}
+            className="rounded-full bg-white/10 px-4 py-2 text-sm font-medium"
+          >
+            Call
+          </button>
+
+        </div>
+
       </header>
 
+      {/* MESSAGES */}
+
       <section className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
+
         {messages.map((message, index) => {
+
           if (message.type === "image") {
             return (
               <div
@@ -607,11 +793,14 @@ export default function Home() {
                 <img
                   src={message.image}
                   alt="Erika"
-                  className="max-w-[85%] rounded-2xl"
+                  className="max-w-[88%] rounded-3xl object-cover"
                 />
               </div>
             );
           }
+
+          const voiceMessage =
+            message.source === "voice";
 
           return (
             <div
@@ -622,45 +811,87 @@ export default function Home() {
                   : "flex justify-start"
               }
             >
+
               <div
                 className={
                   message.role === "user"
-                    ? "max-w-[80%] rounded-2xl rounded-br-md bg-blue-600 px-4 py-3"
-                    : "max-w-[80%] rounded-2xl rounded-bl-md bg-white/10 px-4 py-3"
+                    ? "max-w-[82%] rounded-3xl rounded-br-lg bg-blue-600 px-4 py-3"
+                    : "max-w-[82%] rounded-3xl rounded-bl-lg bg-white/10 px-4 py-3"
                 }
               >
-                {message.text}
+                <p>{message.text}</p>
+
+                {voiceMessage && (
+                  <p className="mt-1 text-[10px] text-white/35">
+                    voice
+                  </p>
+                )}
               </div>
+
             </div>
           );
         })}
+
+        {activity !== "idle" && (
+          <div className="flex justify-start">
+            <div className="rounded-3xl rounded-bl-lg bg-white/10 px-4 py-3 text-white/50">
+              {activity === "photo"
+                ? "Taking a photo..."
+                : "•••"}
+            </div>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+
       </section>
 
-      <footer className="border-t border-white/10 p-3">
-        <div className="flex gap-2">
-          <input
+      {/* MESSAGE BOX */}
+
+      <footer
+        className="sticky bottom-0 bg-black/90 backdrop-blur-xl border-t border-white/10 px-3 pt-3"
+        style={{
+          paddingBottom:
+            "max(12px, env(safe-area-inset-bottom))",
+        }}
+      >
+
+        <div className="flex items-end gap-2">
+
+          <textarea
             value={input}
             onChange={(e) =>
               setInput(e.target.value)
             }
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey
+              ) {
+                e.preventDefault();
                 sendMessage();
               }
             }}
+            rows={1}
             placeholder="Message Erika..."
-            className="flex-1 rounded-full bg-white/10 px-4 py-3 outline-none"
+            className="max-h-32 min-h-[46px] flex-1 resize-none rounded-3xl bg-white/10 px-4 py-3 outline-none"
           />
 
           <button
             onClick={sendMessage}
-            disabled={loading}
-            className="rounded-full bg-white px-5 py-3 font-medium text-black disabled:opacity-50"
+            disabled={
+              activity !== "idle" ||
+              !input.trim()
+            }
+            className="h-12 rounded-full bg-white px-5 font-semibold text-black disabled:opacity-30"
           >
             Send
           </button>
+
         </div>
+
       </footer>
+
     </main>
   );
 }
