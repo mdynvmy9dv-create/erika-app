@@ -25,11 +25,10 @@ export default function Home() {
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [photoLoading, setPhotoLoading] = useState(false);
 
   async function sendMessage() {
     const cleaned = input.trim();
-    if (!cleaned || loading || photoLoading) return;
+    if (!cleaned || loading) return;
 
     const newMessages: Message[] = [
       ...messages,
@@ -45,7 +44,7 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const response = await fetch("/api/chat", {
+      const chatResponse = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -60,21 +59,69 @@ export default function Home() {
         }),
       });
 
-      const data = await response.json();
+      const chatData = await chatResponse.json();
 
-      if (!response.ok) {
-        throw new Error(data.error || "Request failed");
+      if (!chatResponse.ok) {
+        throw new Error(chatData.error || "Chat request failed");
       }
 
-      setMessages((current) => [
-        ...current,
-        {
-          role: "assistant",
-          type: "text",
-          text: data.reply || "Something went wrong.",
-        },
-      ]);
-    } catch {
+      if (chatData.type === "text") {
+        setMessages((current) => [
+          ...current,
+          {
+            role: "assistant",
+            type: "text",
+            text: chatData.message,
+          },
+        ]);
+
+        return;
+      }
+
+      if (chatData.type === "photo") {
+        if (chatData.message) {
+          setMessages((current) => [
+            ...current,
+            {
+              role: "assistant",
+              type: "text",
+              text: chatData.message,
+            },
+          ]);
+        }
+
+        const photoResponse = await fetch("/api/photo", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            prompt: chatData.photoPrompt,
+          }),
+        });
+
+        const photoData = await photoResponse.json();
+
+        if (!photoResponse.ok || !photoData.image) {
+          throw new Error(photoData.error || "Photo generation failed");
+        }
+
+        setMessages((current) => [
+          ...current,
+          {
+            role: "assistant",
+            type: "image",
+            image: photoData.image,
+          },
+        ]);
+
+        return;
+      }
+
+      throw new Error("Unknown response type");
+    } catch (error) {
+      console.error(error);
+
       setMessages((current) => [
         ...current,
         {
@@ -88,76 +135,13 @@ export default function Home() {
     }
   }
 
-  async function generatePhoto() {
-    if (photoLoading || loading) return;
-
-    const scene = window.prompt(
-      "What should Erika be doing in the photo?",
-      "casual iPhone selfie in the front passenger seat of a car"
-    );
-
-    if (!scene) return;
-
-    setPhotoLoading(true);
-
-    setMessages((current) => [
-      ...current,
-      {
-        role: "assistant",
-        type: "text",
-        text: "One sec...",
-      },
-    ]);
-
-    try {
-      const response = await fetch("/api/photo", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt: scene,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok || !data.image) {
-        throw new Error(data.error || "Photo generation failed");
-      }
-
-      setMessages((current) => [
-        ...current,
-        {
-          role: "assistant",
-          type: "image",
-          image: data.image,
-        },
-      ]);
-    } catch {
-      setMessages((current) => [
-        ...current,
-        {
-          role: "assistant",
-          type: "text",
-          text: "I couldn’t generate the photo.",
-        },
-      ]);
-    } finally {
-      setPhotoLoading(false);
-    }
-  }
-
   return (
     <main className="min-h-screen bg-black text-white flex flex-col">
       <header className="border-b border-white/10 px-4 py-4">
         <h1 className="text-xl font-semibold">Erika</h1>
+
         <p className="text-sm text-white/50">
-          {loading
-            ? "typing..."
-            : photoLoading
-            ? "taking a photo..."
-            : "online"}
+          {loading ? "typing..." : "online"}
         </p>
       </header>
 
@@ -200,19 +184,13 @@ export default function Home() {
 
       <footer className="border-t border-white/10 p-3">
         <div className="flex gap-2">
-          <button
-            onClick={generatePhoto}
-            disabled={loading || photoLoading}
-            className="rounded-full bg-white/10 px-4 py-3 disabled:opacity-50"
-          >
-            Photo
-          </button>
-
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") sendMessage();
+              if (e.key === "Enter") {
+                sendMessage();
+              }
             }}
             placeholder="Message Erika..."
             className="flex-1 rounded-full bg-white/10 px-4 py-3 outline-none"
@@ -220,7 +198,7 @@ export default function Home() {
 
           <button
             onClick={sendMessage}
-            disabled={loading || photoLoading}
+            disabled={loading}
             className="rounded-full bg-white px-5 py-3 font-medium text-black disabled:opacity-50"
           >
             Send
