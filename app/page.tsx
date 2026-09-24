@@ -33,10 +33,6 @@ export default function Home() {
 
   const savedVoiceItemsRef = useRef<Set<string>>(new Set());
 
-  // -------------------------
-  // LOAD HISTORY
-  // -------------------------
-
   useEffect(() => {
     async function loadHistory() {
       try {
@@ -113,10 +109,6 @@ export default function Home() {
     loadHistory();
   }, []);
 
-  // -------------------------
-  // SAVE MESSAGE
-  // -------------------------
-
   async function saveMessage(
     message: Message,
     metadata: Record<string, any> = {}
@@ -150,10 +142,6 @@ export default function Home() {
       console.error("Could not save message:", error);
     }
   }
-
-  // -------------------------
-  // NORMAL TEXT CHAT
-  // -------------------------
 
   async function sendMessage() {
     const cleaned = input.trim();
@@ -302,13 +290,9 @@ export default function Home() {
     }
   }
 
-  // -------------------------
-  // VOICE EVENT HANDLER
-  // -------------------------
-
   async function handleRealtimeEvent(event: any) {
     try {
-      // User speech transcription completed
+      // Save what YOU say during the call
       if (
         event.type ===
           "conversation.item.input_audio_transcription.completed" &&
@@ -343,10 +327,14 @@ export default function Home() {
         return;
       }
 
-      // Erika's spoken response transcript completed
+      // Save what ERIKA says during the call
       if (
-        event.type ===
-          "response.audio_transcript.done" &&
+        (
+          event.type ===
+            "response.output_audio_transcript.done" ||
+          event.type ===
+            "response.audio_transcript.done"
+        ) &&
         event.transcript
       ) {
         const key =
@@ -387,10 +375,6 @@ export default function Home() {
       );
     }
   }
-
-  // -------------------------
-  // LIVE VOICE
-  // -------------------------
 
   async function startVoice() {
     if (voiceActive || voiceConnecting) return;
@@ -561,10 +545,6 @@ export default function Home() {
     setVoiceActive(false);
     setVoiceConnecting(false);
   }
-
-  // -------------------------
-  // SCREEN
-  // -------------------------
 
   if (!historyLoaded) {
     return (
