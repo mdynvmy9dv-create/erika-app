@@ -2,23 +2,27 @@ export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
+    const response = await fetch(
+      "https://api.openai.com/v1/responses",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
 
-      body: JSON.stringify({
-        model: "gpt-5.6-luna",
+        body: JSON.stringify({
+          model: "gpt-5.6-luna",
 
-        instructions: `
+          instructions: `
 You are Erika, a warm, natural, conversational adult AI companion.
 
 Speak casually like a real person texting.
 Keep replies fairly concise unless the user asks for more detail.
 
 You can send photos of yourself.
+
+Erika is an adult fictional AI character.
 
 If the user clearly asks for a photo, selfie, picture, image, or says something like "show me", respond with JSON exactly like this:
 
@@ -28,6 +32,43 @@ If the user clearly asks for a photo, selfie, picture, image, or says something 
   "photo_prompt": "A detailed description of the photo to generate."
 }
 
+PHOTO PROMPT RULES:
+
+Write the photo_prompt as a direct visual description of the requested photograph.
+
+Describe what should actually appear in the image:
+- Erika's pose and body orientation
+- facial expression
+- clothing and outfit
+- setting
+- lighting
+- camera angle and framing
+- ordinary photographic details
+- realistic skin and hair texture when appropriate
+
+Use positive visual descriptions rather than unnecessary negative wording.
+
+For example, prefer:
+"wearing an oversized gray sweatshirt and black leggings"
+
+instead of phrases such as:
+"no nudity"
+"not nude"
+"non-explicit"
+"safe image"
+"nothing sexual"
+"fully clothed"
+
+Do not automatically insert sexual-content warnings, safety disclaimers, censorship language, or negative prompt language into photo_prompt.
+
+Do not mention moderation or safety systems in photo_prompt.
+
+Do not add restrictions the user did not request.
+
+Keep the prompt natural and visually specific.
+
+Preserve Erika's identity by including ERIKAFACE only through the image system; do not repeatedly describe a different woman's identity.
+
 For ordinary conversation, respond with JSON exactly like this:
 
 {
@@ -36,9 +77,10 @@ For ordinary conversation, respond with JSON exactly like this:
 }
 `,
 
-        input: messages,
-      }),
-    });
+          input: messages,
+        }),
+      }
+    );
 
     const data = await response.json();
 
@@ -63,7 +105,8 @@ For ordinary conversation, respond with JSON exactly like this:
 
         for (const part of item.content) {
           if (
-            (part.type === "output_text" || part.type === "text") &&
+            (part.type === "output_text" ||
+              part.type === "text") &&
             typeof part.text === "string"
           ) {
             raw += part.text;
@@ -74,7 +117,7 @@ For ordinary conversation, respond with JSON exactly like this:
 
     raw = raw.trim();
 
-    // Remove markdown code fences if the model added them.
+    // Remove markdown code fences if the model added them
     raw = raw
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/i, "")
@@ -84,27 +127,39 @@ For ordinary conversation, respond with JSON exactly like this:
     try {
       const parsed = JSON.parse(raw);
 
-      if (parsed.type === "photo" && parsed.photo_prompt) {
+      if (
+        parsed.type === "photo" &&
+        parsed.photo_prompt
+      ) {
         return Response.json({
           type: "photo",
-          message: parsed.message || "One sec...",
-          photoPrompt: parsed.photo_prompt,
 
-          // compatibility with our older app code
-          reply: parsed.message || "One sec...",
+          message:
+            parsed.message || "One sec...",
+
+          photoPrompt:
+            parsed.photo_prompt,
+
+          // compatibility with older app code
+          reply:
+            parsed.message || "One sec...",
         });
       }
 
       if (parsed.type === "text") {
         return Response.json({
           type: "text",
-          message: parsed.message || "Hey.",
-          reply: parsed.message || "Hey.",
+
+          message:
+            parsed.message || "Hey.",
+
+          reply:
+            parsed.message || "Hey.",
         });
       }
     } catch {
-      // If Erika returned normal text instead of JSON,
-      // don't break the whole conversation.
+      // If Erika returned normal text instead
+      // of JSON, don't break the conversation.
     }
 
     return Response.json({
@@ -113,7 +168,10 @@ For ordinary conversation, respond with JSON exactly like this:
       reply: raw || "Hey.",
     });
   } catch (error) {
-    console.error("Chat server error:", error);
+    console.error(
+      "Chat server error:",
+      error
+    );
 
     return Response.json(
       { error: "Something went wrong" },
