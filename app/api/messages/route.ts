@@ -1,7 +1,7 @@
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-function headers() {
+function supabaseHeaders() {
   return {
     apikey: supabaseKey!,
     Authorization: `Bearer ${supabaseKey}`,
@@ -9,7 +9,7 @@ function headers() {
   };
 }
 
-// Load saved messages
+// Load saved conversation history
 export async function GET() {
   try {
     if (!supabaseUrl || !supabaseKey) {
@@ -20,16 +20,16 @@ export async function GET() {
     }
 
     const response = await fetch(
-      `${supabaseUrl}/rest/v1/messages?select=id,created_at,role,type,text,image&order=created_at.asc&limit=200`,
+      `${supabaseUrl}/rest/v1/messages?select=id,created_at,role,type,text,image,source,conversation_id,metadata&order=created_at.asc&limit=250`,
       {
-        headers: headers(),
+        headers: supabaseHeaders(),
         cache: "no-store",
       }
     );
 
     if (!response.ok) {
-      const error = await response.text();
-      console.error("Supabase load error:", error);
+      const errorText = await response.text();
+      console.error("Supabase load error:", errorText);
 
       return Response.json(
         { error: "Could not load messages" },
@@ -39,7 +39,9 @@ export async function GET() {
 
     const messages = await response.json();
 
-    return Response.json({ messages });
+    return Response.json({
+      messages,
+    });
   } catch (error) {
     console.error("Message load error:", error);
 
@@ -60,7 +62,15 @@ export async function POST(req: Request) {
       );
     }
 
-    const { role, type, text, image } = await req.json();
+    const {
+      role,
+      type,
+      text,
+      image,
+      source,
+      conversation_id,
+      metadata,
+    } = await req.json();
 
     if (!role || !type) {
       return Response.json(
@@ -69,26 +79,37 @@ export async function POST(req: Request) {
       );
     }
 
+    const record = {
+      role,
+      type,
+
+      text: text ?? null,
+      image: image ?? null,
+
+      source: source ?? "text",
+
+      conversation_id:
+        conversation_id ?? "main",
+
+      metadata:
+        metadata ?? {},
+    };
+
     const response = await fetch(
       `${supabaseUrl}/rest/v1/messages`,
       {
         method: "POST",
         headers: {
-          ...headers(),
+          ...supabaseHeaders(),
           Prefer: "return=representation",
         },
-        body: JSON.stringify({
-          role,
-          type,
-          text: text ?? null,
-          image: image ?? null,
-        }),
+        body: JSON.stringify(record),
       }
     );
 
     if (!response.ok) {
-      const error = await response.text();
-      console.error("Supabase save error:", error);
+      const errorText = await response.text();
+      console.error("Supabase save error:", errorText);
 
       return Response.json(
         { error: "Could not save message" },
