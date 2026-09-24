@@ -7,11 +7,13 @@ type Message =
       role: "user" | "assistant";
       type: "text";
       text: string;
+      source?: "text" | "voice";
     }
   | {
       role: "assistant";
       type: "image";
       image: string;
+      source?: "photo";
     };
 
 export default function Home() {
@@ -27,9 +29,12 @@ export default function Home() {
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const dataChannelRef = useRef<RTCDataChannel | null>(null);
+
+  const savedVoiceItemsRef = useRef<Set<string>>(new Set());
 
   // -------------------------
-  // LOAD SAVED CHAT HISTORY
+  // LOAD HISTORY
   // -------------------------
 
   useEffect(() => {
@@ -57,6 +62,7 @@ export default function Home() {
                   role: message.role,
                   type: "text",
                   text: message.text || "",
+                  source: message.source || "text",
                 } as Message;
               }
 
@@ -69,6 +75,7 @@ export default function Home() {
                   role: "assistant",
                   type: "image",
                   image: message.image,
+                  source: "photo",
                 } as Message;
               }
 
@@ -83,6 +90,7 @@ export default function Home() {
               role: "assistant",
               type: "text",
               text: "Hey. I’m Erika. What are you up to?",
+              source: "text",
             },
           ]);
         }
@@ -94,6 +102,7 @@ export default function Home() {
             role: "assistant",
             type: "text",
             text: "Hey. I’m Erika. What are you up to?",
+            source: "text",
           },
         ]);
       } finally {
@@ -105,10 +114,13 @@ export default function Home() {
   }, []);
 
   // -------------------------
-  // SAVE ONE MESSAGE
+  // SAVE MESSAGE
   // -------------------------
 
-  async function saveMessage(message: Message) {
+  async function saveMessage(
+    message: Message,
+    metadata: Record<string, any> = {}
+  ) {
     try {
       await fetch("/api/messages", {
         method: "POST",
@@ -118,16 +130,20 @@ export default function Home() {
         body: JSON.stringify({
           role: message.role,
           type: message.type,
-
           text:
             message.type === "text"
               ? message.text
               : null,
-
           image:
             message.type === "image"
               ? message.image
               : null,
+          source:
+            message.type === "image"
+              ? "photo"
+              : message.source || "text",
+          conversation_id: "main",
+          metadata,
         }),
       });
     } catch (error) {
@@ -136,7 +152,7 @@ export default function Home() {
   }
 
   // -------------------------
-  // TEXT CHAT
+  // NORMAL TEXT CHAT
   // -------------------------
 
   async function sendMessage() {
@@ -148,6 +164,7 @@ export default function Home() {
       role: "user",
       type: "text",
       text: cleaned,
+      source: "text",
     };
 
     const newMessages = [...messages, userMessage];
@@ -156,7 +173,6 @@ export default function Home() {
     setInput("");
     setLoading(true);
 
-    // Save what you said
     await saveMessage(userMessage);
 
     try {
@@ -189,15 +205,12 @@ export default function Home() {
         );
       }
 
-      // -------------------------
-      // NORMAL TEXT RESPONSE
-      // -------------------------
-
       if (chatData.type === "text") {
         const assistantMessage: Message = {
           role: "assistant",
           type: "text",
           text: chatData.message,
+          source: "text",
         };
 
         setMessages((current) => [
@@ -210,16 +223,13 @@ export default function Home() {
         return;
       }
 
-      // -------------------------
-      // PHOTO RESPONSE
-      // -------------------------
-
       if (chatData.type === "photo") {
         if (chatData.message) {
           const beforePhotoMessage: Message = {
             role: "assistant",
             type: "text",
             text: chatData.message,
+            source: "text",
           };
 
           setMessages((current) => [
@@ -256,6 +266,7 @@ export default function Home() {
           role: "assistant",
           type: "image",
           image: photoData.image,
+          source: "photo",
         };
 
         setMessages((current) => [
@@ -263,7 +274,12 @@ export default function Home() {
           imageMessage,
         ]);
 
-        await saveMessage(imageMessage);
+        await saveMessage(
+          imageMessage,
+          photoData.metadata || {
+            prompt: chatData.photoPrompt,
+          }
+        );
 
         return;
       }
@@ -278,10 +294,97 @@ export default function Home() {
           role: "assistant",
           type: "text",
           text: "I had trouble connecting. Try again.",
+          source: "text",
         },
       ]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  // -------------------------
+  // VOICE EVENT HANDLER
+  // -------------------------
+
+  async function handleRealtimeEvent(event: any) {
+    try {
+      // User speech transcription completed
+      if (
+        event.type ===
+          "conversation.item.input_audio_transcription.completed" &&
+        event.transcript
+      ) {
+        const key =
+          event.item_id ||
+          `user-${event.transcript}`;
+
+        if (savedVoiceItemsRef.current.has(key)) {
+          return;
+        }
+
+        savedVoiceItemsRef.current.add(key);
+
+        const voiceUserMessage: Message = {
+          role: "user",
+          type: "text",
+          text: event.transcript,
+          source: "voice",
+        };
+
+        setMessages((current) => [
+          ...current,
+          voiceUserMessage,
+        ]);
+
+        await saveMessage(voiceUserMessage, {
+          realtime_item_id: event.item_id || null,
+        });
+
+        return;
+      }
+
+      // Erika's spoken response transcript completed
+      if (
+        event.type ===
+          "response.audio_transcript.done" &&
+        event.transcript
+      ) {
+        const key =
+          event.item_id ||
+          event.response_id ||
+          `assistant-${event.transcript}`;
+
+        if (savedVoiceItemsRef.current.has(key)) {
+          return;
+        }
+
+        savedVoiceItemsRef.current.add(key);
+
+        const voiceAssistantMessage: Message = {
+          role: "assistant",
+          type: "text",
+          text: event.transcript,
+          source: "voice",
+        };
+
+        setMessages((current) => [
+          ...current,
+          voiceAssistantMessage,
+        ]);
+
+        await saveMessage(voiceAssistantMessage, {
+          realtime_item_id: event.item_id || null,
+          realtime_response_id:
+            event.response_id || null,
+        });
+
+        return;
+      }
+    } catch (error) {
+      console.error(
+        "Realtime event handling error:",
+        error
+      );
     }
   }
 
@@ -347,10 +450,28 @@ export default function Home() {
       const dataChannel =
         pc.createDataChannel("oai-events");
 
+      dataChannelRef.current = dataChannel;
+
       dataChannel.onopen = () => {
         console.log(
           "Realtime voice connected"
         );
+      };
+
+      dataChannel.onmessage = async (event) => {
+        try {
+          const realtimeEvent =
+            JSON.parse(event.data);
+
+          await handleRealtimeEvent(
+            realtimeEvent
+          );
+        } catch (error) {
+          console.error(
+            "Realtime message parse error:",
+            error
+          );
+        }
       };
 
       dataChannel.onerror = (event) => {
@@ -421,6 +542,11 @@ export default function Home() {
       micStreamRef.current = null;
     }
 
+    if (dataChannelRef.current) {
+      dataChannelRef.current.close();
+      dataChannelRef.current = null;
+    }
+
     if (peerRef.current) {
       peerRef.current.close();
       peerRef.current = null;
@@ -452,7 +578,6 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-black text-white flex flex-col">
-
       <header className="border-b border-white/10 px-4 py-4 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">
@@ -492,7 +617,6 @@ export default function Home() {
       </header>
 
       <section className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
-
         {messages.map((message, index) => {
           if (message.type === "image") {
             return (
@@ -530,13 +654,10 @@ export default function Home() {
             </div>
           );
         })}
-
       </section>
 
       <footer className="border-t border-white/10 p-3">
-
         <div className="flex gap-2">
-
           <input
             value={input}
             onChange={(e) =>
@@ -558,11 +679,8 @@ export default function Home() {
           >
             Send
           </button>
-
         </div>
-
       </footer>
-
     </main>
   );
 }
