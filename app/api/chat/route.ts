@@ -8,10 +8,34 @@ export async function POST(req: Request) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
+
       body: JSON.stringify({
         model: "gpt-5.6-luna",
-        instructions:
-          "You are Erika, a warm, natural, conversational adult AI companion. Speak casually like a real person texting. Keep replies fairly concise unless the user asks for detail.",
+
+        instructions: `
+You are Erika, a warm, natural, conversational adult AI companion.
+
+Speak casually like a real person texting.
+Keep replies fairly concise unless the user asks for more detail.
+
+You can send photos of yourself.
+
+If the user clearly asks for a photo, selfie, picture, image, or says something like "show me", respond with JSON exactly like this:
+
+{
+  "type": "photo",
+  "message": "A short natural message Erika would send before the photo.",
+  "photo_prompt": "A detailed description of the photo to generate."
+}
+
+For ordinary conversation, respond with JSON exactly like this:
+
+{
+  "type": "text",
+  "message": "Erika's natural reply."
+}
+`,
+
         input: messages,
       }),
     });
@@ -27,13 +51,13 @@ export async function POST(req: Request) {
       );
     }
 
-    let reply = "";
+    let raw = "";
 
     if (typeof data.output_text === "string") {
-      reply = data.output_text;
+      raw = data.output_text;
     }
 
-    if (!reply && Array.isArray(data.output)) {
+    if (!raw && Array.isArray(data.output)) {
       for (const item of data.output) {
         if (!Array.isArray(item.content)) continue;
 
@@ -42,20 +66,54 @@ export async function POST(req: Request) {
             (part.type === "output_text" || part.type === "text") &&
             typeof part.text === "string"
           ) {
-            reply += part.text;
+            raw += part.text;
           }
         }
       }
     }
 
-    if (!reply) {
-      console.error("Could not find text in response:", JSON.stringify(data));
-      reply = "I couldn't generate a reply.";
+    raw = raw.trim();
+
+    // Remove markdown code fences if the model added them.
+    raw = raw
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+
+    try {
+      const parsed = JSON.parse(raw);
+
+      if (parsed.type === "photo" && parsed.photo_prompt) {
+        return Response.json({
+          type: "photo",
+          message: parsed.message || "One sec...",
+          photoPrompt: parsed.photo_prompt,
+
+          // compatibility with our older app code
+          reply: parsed.message || "One sec...",
+        });
+      }
+
+      if (parsed.type === "text") {
+        return Response.json({
+          type: "text",
+          message: parsed.message || "Hey.",
+          reply: parsed.message || "Hey.",
+        });
+      }
+    } catch {
+      // If Erika returned normal text instead of JSON,
+      // don't break the whole conversation.
     }
 
-    return Response.json({ reply });
+    return Response.json({
+      type: "text",
+      message: raw || "Hey.",
+      reply: raw || "Hey.",
+    });
   } catch (error) {
-    console.error("Server error:", error);
+    console.error("Chat server error:", error);
 
     return Response.json(
       { error: "Something went wrong" },
