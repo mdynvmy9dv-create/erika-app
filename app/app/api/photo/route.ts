@@ -28,66 +28,30 @@ export async function POST(req: Request) {
       );
     }
 
-    // Get latest version of Erika model
-    const modelResponse = await fetch(
-      "https://api.replicate.com/v1/models/mdynvmy9dv-create/erikaface",
-      {
-        headers: {
-          Authorization: `Bearer ${replicateToken}`,
-        },
-      }
-    );
+    // --------------------------------------------------
+    // GENERATE WITH OFFICIAL FLUX DEV LORA MODEL
+    // --------------------------------------------------
 
-    if (!modelResponse.ok) {
-      const text = await modelResponse.text();
-
-      console.error(
-        "Replicate model error:",
-        text
-      );
-
-      return Response.json(
-        { error: "Could not load Erika model" },
-        { status: 500 }
-      );
-    }
-
-    const modelData = await modelResponse.json();
-
-    const version =
-      modelData.latest_version?.id;
-
-    if (!version) {
-      console.error(
-        "No Erika model version found:",
-        modelData
-      );
-
-      return Response.json(
-        { error: "No Erika model version found" },
-        { status: 500 }
-      );
-    }
-
-    // Start Erika photo generation
     const predictionResponse = await fetch(
-      "https://api.replicate.com/v1/predictions",
+      "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions",
       {
         method: "POST",
 
         headers: {
-          Authorization:
-            `Bearer ${replicateToken}`,
-          "Content-Type":
-            "application/json",
+          Authorization: `Bearer ${replicateToken}`,
+          "Content-Type": "application/json",
           Prefer: "wait",
         },
 
         body: JSON.stringify({
-          version,
-
           input: {
             prompt: `ERIKAFACE, ${prompt}`,
+
+            // Your trained Erika LoRA
+            lora_weights:
+              "mdynvmy9dv-create/erikaface",
+
+            lora_scale: 1.05,
 
             aspect_ratio: "4:5",
 
@@ -95,9 +59,10 @@ export async function POST(req: Request) {
 
             num_inference_steps: 28,
 
-            guidance_scale: 2.17,
-
-            lora_scale: 1.05,
+            // IMPORTANT:
+            // This official model calls it "guidance",
+            // not "guidance_scale".
+            guidance: 2.17,
 
             output_format: "jpg",
 
@@ -107,7 +72,6 @@ export async function POST(req: Request) {
 
             megapixels: "1",
 
-            // API-only model safety setting
             disable_safety_checker: true,
           },
         }),
@@ -115,8 +79,7 @@ export async function POST(req: Request) {
     );
 
     if (!predictionResponse.ok) {
-      const text =
-        await predictionResponse.text();
+      const text = await predictionResponse.text();
 
       console.error(
         "Replicate prediction error:",
@@ -125,8 +88,8 @@ export async function POST(req: Request) {
 
       return Response.json(
         {
-          error:
-            "Photo generation failed",
+          error: "Photo generation failed",
+          details: text,
         },
         { status: 500 }
       );
@@ -135,15 +98,15 @@ export async function POST(req: Request) {
     let prediction =
       await predictionResponse.json();
 
-    // Wait for Replicate to finish
-    for (let i = 0; i < 45; i++) {
+    // --------------------------------------------------
+    // WAIT FOR GENERATION
+    // --------------------------------------------------
+
+    for (let i = 0; i < 60; i++) {
       if (
-        prediction.status ===
-          "succeeded" ||
-        prediction.status ===
-          "failed" ||
-        prediction.status ===
-          "canceled"
+        prediction.status === "succeeded" ||
+        prediction.status === "failed" ||
+        prediction.status === "canceled"
       ) {
         break;
       }
@@ -163,21 +126,32 @@ export async function POST(req: Request) {
       );
 
       if (!checkResponse.ok) {
+        const text =
+          await checkResponse.text();
+
         console.error(
           "Replicate status error:",
-          await checkResponse.text()
+          text
         );
 
-        break;
+        return Response.json(
+          {
+            error:
+              "Could not check photo generation status",
+          },
+          { status: 500 }
+        );
       }
 
       prediction =
         await checkResponse.json();
     }
 
-    if (
-      prediction.status !== "succeeded"
-    ) {
+    // --------------------------------------------------
+    // HANDLE FAILURE
+    // --------------------------------------------------
+
+    if (prediction.status !== "succeeded") {
       console.error(
         "Prediction did not succeed:",
         prediction
@@ -186,13 +160,23 @@ export async function POST(req: Request) {
       return Response.json(
         {
           error:
+            prediction.error ||
             "Erika photo did not finish generating",
+
+          predictionStatus:
+            prediction.status,
+
+          predictionId:
+            prediction.id,
         },
         { status: 500 }
       );
     }
 
-    // Get generated Replicate image URL
+    // --------------------------------------------------
+    // GET GENERATED IMAGE
+    // --------------------------------------------------
+
     const replicateImageUrl =
       Array.isArray(prediction.output)
         ? prediction.output[0]
@@ -208,15 +192,21 @@ export async function POST(req: Request) {
       );
     }
 
-    // Download finished image from Replicate
+    // --------------------------------------------------
+    // DOWNLOAD FROM REPLICATE
+    // --------------------------------------------------
+
     const imageResponse = await fetch(
       replicateImageUrl
     );
 
     if (!imageResponse.ok) {
+      const text =
+        await imageResponse.text();
+
       console.error(
         "Replicate image download error:",
-        await imageResponse.text()
+        text
       );
 
       return Response.json(
@@ -231,11 +221,13 @@ export async function POST(req: Request) {
     const imageBytes =
       await imageResponse.arrayBuffer();
 
-    // Permanent Supabase filename
+    // --------------------------------------------------
+    // SAVE PERMANENTLY TO SUPABASE
+    // --------------------------------------------------
+
     const fileName =
       `erika-${Date.now()}-${crypto.randomUUID()}.jpg`;
 
-    // Upload permanently into erika-photos
     const uploadResponse = await fetch(
       `${supabaseUrl}/storage/v1/object/erika-photos/${fileName}`,
       {
@@ -274,7 +266,10 @@ export async function POST(req: Request) {
       );
     }
 
-    // Permanent public Supabase URL
+    // --------------------------------------------------
+    // PERMANENT IMAGE URL
+    // --------------------------------------------------
+
     const permanentImageUrl =
       `${supabaseUrl}/storage/v1/object/public/erika-photos/${fileName}`;
 
@@ -285,9 +280,16 @@ export async function POST(req: Request) {
         replicate_prediction_id:
           prediction.id,
 
+        model:
+          "black-forest-labs/flux-dev-lora",
+
+        lora:
+          "mdynvmy9dv-create/erikaface",
+
         prompt,
 
-        storage_file: fileName,
+        storage_file:
+          fileName,
 
         permanent: true,
       },
