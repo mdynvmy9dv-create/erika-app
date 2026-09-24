@@ -14,7 +14,7 @@ export async function POST(req: Request) {
   try {
     const { prompt } = await req.json();
 
-    if (!prompt) {
+    if (!prompt || typeof prompt !== "string") {
       return Response.json(
         { error: "Prompt is required" },
         { status: 400 }
@@ -38,6 +38,10 @@ export async function POST(req: Request) {
       );
     }
 
+    // --------------------------------------------------
+    // CREATE REPLICATE PREDICTION
+    // --------------------------------------------------
+
     const predictionResponse = await fetch(
       "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions",
       {
@@ -53,9 +57,11 @@ export async function POST(req: Request) {
           input: {
             prompt: `ERIKAFACE, ERIKABODY, ${prompt}`,
 
+            // Face identity LoRA
             lora_weights: FACE_LORA_URL,
             lora_scale: 1,
 
+            // Body proportions LoRA
             extra_lora: BODY_LORA_URL,
             extra_lora_scale: 1,
 
@@ -103,7 +109,10 @@ export async function POST(req: Request) {
     let prediction =
       predictionData;
 
-    // Poll until finished
+    // --------------------------------------------------
+    // WAIT FOR REPLICATE
+    // --------------------------------------------------
+
     for (let i = 0; i < 60; i++) {
       if (
         prediction.status === "succeeded" ||
@@ -152,6 +161,10 @@ export async function POST(req: Request) {
         checkData;
     }
 
+    // --------------------------------------------------
+    // HANDLE FAILED PREDICTION
+    // --------------------------------------------------
+
     if (
       prediction.status !== "succeeded"
     ) {
@@ -163,14 +176,22 @@ export async function POST(req: Request) {
       return Response.json(
         {
           error:
+            prediction.error ||
             "Prediction did not succeed",
 
-          details:
-            prediction,
+          predictionId:
+            prediction.id,
+
+          status:
+            prediction.status,
         },
         { status: 500 }
       );
     }
+
+    // --------------------------------------------------
+    // GET GENERATED IMAGE URL
+    // --------------------------------------------------
 
     const replicateImageUrl =
       Array.isArray(prediction.output)
@@ -187,7 +208,10 @@ export async function POST(req: Request) {
       );
     }
 
-    // Download generated image
+    // --------------------------------------------------
+    // DOWNLOAD IMAGE FROM REPLICATE
+    // --------------------------------------------------
+
     const imageResponse = await fetch(
       replicateImageUrl
     );
@@ -213,7 +237,10 @@ export async function POST(req: Request) {
     const imageBytes =
       await imageResponse.arrayBuffer();
 
-    // Save permanently in Supabase
+    // --------------------------------------------------
+    // SAVE PERMANENTLY TO SUPABASE
+    // --------------------------------------------------
+
     const fileName =
       `erika-${Date.now()}-${crypto.randomUUID()}.jpg`;
 
@@ -253,7 +280,7 @@ export async function POST(req: Request) {
       return Response.json(
         {
           error:
-            "Image generated, but failed to save to Supabase",
+            "Image generated but could not be saved permanently",
 
           details:
             uploadError,
@@ -261,6 +288,10 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
+
+    // --------------------------------------------------
+    // PERMANENT PUBLIC IMAGE URL
+    // --------------------------------------------------
 
     const permanentImageUrl =
       `${supabaseUrl}/storage/v1/object/public/erika-photos/${fileName}`;
@@ -270,12 +301,25 @@ export async function POST(req: Request) {
         permanentImageUrl,
 
       metadata: {
-        predictionId:
+        replicate_prediction_id:
           prediction.id,
 
         prompt,
 
-        fileName,
+        face_lora:
+          FACE_LORA_URL,
+
+        body_lora:
+          BODY_LORA_URL,
+
+        face_lora_scale:
+          1,
+
+        body_lora_scale:
+          1,
+
+        storage_file:
+          fileName,
 
         permanent:
           true,
