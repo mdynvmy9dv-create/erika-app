@@ -1,3 +1,6 @@
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
 export async function POST(req: Request) {
   try {
     const { prompt } = await req.json();
@@ -9,28 +12,39 @@ export async function POST(req: Request) {
       );
     }
 
-    const token = process.env.REPLICATE_API_TOKEN;
+    const replicateToken = process.env.REPLICATE_API_TOKEN;
 
-    if (!token) {
+    if (!replicateToken) {
       return Response.json(
         { error: "Replicate token is missing" },
         { status: 500 }
       );
     }
 
-    // 1. Get the latest version of our private Erika model
+    if (!supabaseUrl || !supabaseKey) {
+      return Response.json(
+        { error: "Supabase environment variables are missing" },
+        { status: 500 }
+      );
+    }
+
+    // Get latest version of Erika model
     const modelResponse = await fetch(
       "https://api.replicate.com/v1/models/mdynvmy9dv-create/erikaface",
       {
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${replicateToken}`,
         },
       }
     );
 
     if (!modelResponse.ok) {
       const text = await modelResponse.text();
-      console.error("Replicate model error:", text);
+
+      console.error(
+        "Replicate model error:",
+        text
+      );
 
       return Response.json(
         { error: "Could not load Erika model" },
@@ -39,10 +53,15 @@ export async function POST(req: Request) {
     }
 
     const modelData = await modelResponse.json();
-    const version = modelData.latest_version?.id;
+
+    const version =
+      modelData.latest_version?.id;
 
     if (!version) {
-      console.error("No model version found:", modelData);
+      console.error(
+        "No Erika model version found:",
+        modelData
+      );
 
       return Response.json(
         { error: "No Erika model version found" },
@@ -50,92 +69,240 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2. Start the Erika image generation
+    // Start Erika photo generation
     const predictionResponse = await fetch(
       "https://api.replicate.com/v1/predictions",
       {
         method: "POST",
+
         headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
+          Authorization:
+            `Bearer ${replicateToken}`,
+          "Content-Type":
+            "application/json",
           Prefer: "wait",
         },
+
         body: JSON.stringify({
           version,
+
           input: {
             prompt: `ERIKAFACE, ${prompt}`,
+
             aspect_ratio: "4:5",
+
             num_outputs: 1,
+
             num_inference_steps: 28,
+
             guidance_scale: 2.17,
+
             lora_scale: 1.05,
+
             output_format: "jpg",
+
             output_quality: 95,
+
             go_fast: false,
+
             megapixels: "1",
+
+            // API-only model safety setting
+            disable_safety_checker: true,
           },
         }),
       }
     );
 
     if (!predictionResponse.ok) {
-      const text = await predictionResponse.text();
-      console.error("Replicate prediction error:", text);
+      const text =
+        await predictionResponse.text();
+
+      console.error(
+        "Replicate prediction error:",
+        text
+      );
 
       return Response.json(
-        { error: "Photo generation failed" },
+        {
+          error:
+            "Photo generation failed",
+        },
         { status: 500 }
       );
     }
 
-    let prediction = await predictionResponse.json();
+    let prediction =
+      await predictionResponse.json();
 
-    // 3. If Replicate is still generating, wait for it
-    for (let i = 0; i < 30; i++) {
+    // Wait for Replicate to finish
+    for (let i = 0; i < 45; i++) {
       if (
-        prediction.status === "succeeded" ||
-        prediction.status === "failed" ||
-        prediction.status === "canceled"
+        prediction.status ===
+          "succeeded" ||
+        prediction.status ===
+          "failed" ||
+        prediction.status ===
+          "canceled"
       ) {
         break;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) =>
+        setTimeout(resolve, 1000)
+      );
 
       const checkResponse = await fetch(
         `https://api.replicate.com/v1/predictions/${prediction.id}`,
         {
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization:
+              `Bearer ${replicateToken}`,
           },
         }
       );
 
-      prediction = await checkResponse.json();
+      if (!checkResponse.ok) {
+        console.error(
+          "Replicate status error:",
+          await checkResponse.text()
+        );
+
+        break;
+      }
+
+      prediction =
+        await checkResponse.json();
     }
 
-    if (prediction.status !== "succeeded") {
-      console.error("Prediction did not succeed:", prediction);
+    if (
+      prediction.status !== "succeeded"
+    ) {
+      console.error(
+        "Prediction did not succeed:",
+        prediction
+      );
 
       return Response.json(
-        { error: "Erika photo did not finish generating" },
+        {
+          error:
+            "Erika photo did not finish generating",
+        },
         { status: 500 }
       );
     }
 
-    const image =
+    // Get generated Replicate image URL
+    const replicateImageUrl =
       Array.isArray(prediction.output)
         ? prediction.output[0]
         : prediction.output;
 
+    if (!replicateImageUrl) {
+      return Response.json(
+        {
+          error:
+            "No generated image returned",
+        },
+        { status: 500 }
+      );
+    }
+
+    // Download finished image from Replicate
+    const imageResponse = await fetch(
+      replicateImageUrl
+    );
+
+    if (!imageResponse.ok) {
+      console.error(
+        "Replicate image download error:",
+        await imageResponse.text()
+      );
+
+      return Response.json(
+        {
+          error:
+            "Could not download generated image",
+        },
+        { status: 500 }
+      );
+    }
+
+    const imageBytes =
+      await imageResponse.arrayBuffer();
+
+    // Permanent Supabase filename
+    const fileName =
+      `erika-${Date.now()}-${crypto.randomUUID()}.jpg`;
+
+    // Upload permanently into erika-photos
+    const uploadResponse = await fetch(
+      `${supabaseUrl}/storage/v1/object/erika-photos/${fileName}`,
+      {
+        method: "POST",
+
+        headers: {
+          apikey: supabaseKey,
+
+          Authorization:
+            `Bearer ${supabaseKey}`,
+
+          "Content-Type": "image/jpeg",
+
+          "x-upsert": "false",
+        },
+
+        body: imageBytes,
+      }
+    );
+
+    if (!uploadResponse.ok) {
+      const uploadError =
+        await uploadResponse.text();
+
+      console.error(
+        "Supabase photo upload error:",
+        uploadError
+      );
+
+      return Response.json(
+        {
+          error:
+            "Could not save Erika photo permanently",
+        },
+        { status: 500 }
+      );
+    }
+
+    // Permanent public Supabase URL
+    const permanentImageUrl =
+      `${supabaseUrl}/storage/v1/object/public/erika-photos/${fileName}`;
+
     return Response.json({
-      image,
+      image: permanentImageUrl,
+
+      metadata: {
+        replicate_prediction_id:
+          prediction.id,
+
+        prompt,
+
+        storage_file: fileName,
+
+        permanent: true,
+      },
     });
   } catch (error) {
-    console.error("Photo server error:", error);
+    console.error(
+      "Photo server error:",
+      error
+    );
 
     return Response.json(
-      { error: "Something went wrong generating the photo" },
+      {
+        error:
+          "Something went wrong generating the photo",
+      },
       { status: 500 }
     );
   }
