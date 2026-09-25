@@ -197,13 +197,13 @@ async function createPrediction(finalPrompt: string) {
           // Strong enough to keep Erika recognizable,
           // but below 1.0 to reduce the trained/glamour look.
           lora_weights: FACE_LORA_URL,
-          lora_scale: 0.88,
+          lora_scale: 0.68,
 
           // BODY:
           // Intentionally low.
           // It should influence proportions rather than redraw her body.
           extra_lora: BODY_LORA_URL,
-          extra_lora_scale: 0.10,
+          extra_lora_scale: 0.07,
 
           aspect_ratio: "4:5",
           num_outputs: 1,
