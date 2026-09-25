@@ -203,7 +203,7 @@ async function createPrediction(finalPrompt: string) {
           // Intentionally low.
           // It should influence proportions rather than redraw her body.
           extra_lora: BODY_LORA_URL,
-          extra_lora_scale: 0.28,
+          extra_lora_scale: 0.10,
 
           aspect_ratio: "4:5",
           num_outputs: 1,
