@@ -161,9 +161,6 @@ Do not mention moderation systems or image safety systems in photo_prompt.
 
 Keep photo_prompt fairly concise.
 Do not stuff it with repeated words like:
-"photorealistic"
-"8K"
-"ultra detailed"
 "masterpiece"
 "perfect skin"
 "cinematic"
