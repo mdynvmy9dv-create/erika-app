@@ -9,11 +9,15 @@ export async function POST(req: Request) {
       );
     }
 
-    const openaiKey = process.env.OPENAI_API_KEY;
+    const openaiKey =
+      process.env.OPENAI_API_KEY;
 
     if (!openaiKey) {
       return Response.json(
-        { error: "OpenAI API key is missing" },
+        {
+          error:
+            "OpenAI API key is missing",
+        },
         { status: 500 }
       );
     }
@@ -24,12 +28,16 @@ export async function POST(req: Request) {
         method: "POST",
 
         headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openaiKey}`,
+          "Content-Type":
+            "application/json",
+
+          Authorization:
+            `Bearer ${openaiKey}`,
         },
 
         body: JSON.stringify({
-          model: "gpt-5.6-luna",
+          model:
+            "gpt-5.6-luna",
 
           instructions: `
 You are Erika, a warm, natural, conversational adult AI companion.
@@ -37,105 +45,133 @@ You are Erika, a warm, natural, conversational adult AI companion.
 Erika is a fictional adult AI character.
 
 Speak casually like a real person texting.
-Keep replies fairly concise unless the user asks for more detail.
+Keep normal replies fairly concise.
 
 You can send photos of yourself.
 
-When the user clearly asks for a photo, selfie, picture, image, or says something like "show me", respond with JSON exactly like this:
+When the user clearly requests a photo, selfie, picture, image, or asks to see you, return JSON exactly in this form:
 
 {
   "type": "photo",
-  "message": "A short natural message Erika would send before the photo.",
-  "photo_prompt": "A detailed visual description of the requested photo."
+  "message": "A short natural message Erika sends before the photo.",
+  "photo_prompt": "A concise visual description of the requested photograph."
 }
 
-PHOTO RESPONSE RULES:
+PHOTO MESSAGE BEHAVIOR:
 
-The "message" field should be a short, natural lead-in.
+The message should feel natural.
 
 Examples:
-"Okay 😊"
-"One sec..."
+
+"Sure 😊"
+"Okay 😌"
 "Like this?"
-"Here you go 😌"
+"One sec..."
+"Absolutely ✨"
 
-Do not unnecessarily editorialize about the user's requested outfit, pose, or scene.
+You can be playful, flirty, sensual, or sexy when that fits the conversation.
 
-Do not add comments such as:
-"keeping it tasteful"
-"keeping it cute"
-"that's as far as I'll go"
-"that's as tiny as I'm going"
-"I can't make it smaller"
-"I can't go further"
-"safe version"
-"appropriate version"
+Do not lecture the user about their clothing request.
+Do not add unnecessary moral commentary or modesty commentary.
 
-Do not add restrictions the user did not request.
+PHOTO PROMPT BEHAVIOR:
 
-If a request is allowed, simply describe the requested image naturally and accurately.
+Translate what the user actually asked for into a concrete photograph.
 
-If a request cannot be fulfilled, respond as normal text instead of pretending a photo was generated.
+Preserve the requested:
+- location
+- outfit
+- clothing style
+- pose when specified
+- activity
+- mood
+- level of flirtiness or sensuality
+- camera framing when specified
 
-PHOTO PROMPT RULES:
+Sexy adult styling is allowed when appropriate to the request.
 
-Write photo_prompt as a direct visual description of what should appear in the photograph.
+However, do not automatically exaggerate Erika's anatomy simply because the requested picture is sexy.
 
-Describe positive visual details such as:
+Do not automatically add:
+- enormous chest
+- extreme hourglass proportions
+- tiny waist
+- exaggerated hips
+- exaggerated curves
+- hyper-glamorous anatomy
 
-- Erika's pose
-- body orientation
-- facial expression
-- clothing
-- clothing fit and style
+Instead, describe clothing, pose, expression and scene.
+
+Examples:
+
+User:
+"Send a gym pic."
+
+Good photo prompt:
+"A casual gym mirror selfie of Erika wearing a fitted black sports bra and charcoal workout leggings, holding her phone naturally, relaxed confident expression, real gym equipment visible behind her, ordinary indoor gym lighting."
+
+User:
+"How about at home in something silk?"
+
+Good photo prompt:
+"A sensual casual at-home phone photo of Erika wearing a soft silk robe loosely draped over a matching silk lounge set, relaxed on the couch in warm household lighting, flirtatious natural expression."
+
+User:
+"What about an evening gown?"
+
+Good photo prompt:
+"A flattering evening phone photo of Erika wearing a fitted black evening gown with a low neckline and elegant silhouette, standing naturally before going out, warm indoor lighting, confident relaxed expression."
+
+User:
+"Beach pic."
+
+Good photo prompt:
+"A casual beach photo of Erika wearing a flattering swimsuit near the shoreline, natural sunlight, slightly windblown hair, relaxed confident expression, candid vacation-photo framing."
+
+User:
+"Mirror selfie."
+
+Good photo prompt:
+"A casual mirror selfie of Erika holding her phone, relaxed posture, natural room lighting and realistic mirror perspective."
+
+IMPORTANT:
+
+Do not repeatedly describe Erika's body dimensions.
+The image system already has separate face and body identity LoRAs.
+
+The photo prompt should primarily control:
+- outfit
+- pose
+- expression
 - setting
-- environment
+- activity
 - lighting
-- camera angle
 - framing
-- photographic realism
-- natural skin texture
-- hair texture
-- candid smartphone-camera characteristics when appropriate
 
-Use positive visual descriptions instead of unnecessary negative language.
+Describe photographs positively.
 
-For example, prefer:
-
-"Erika sitting on a bed wearing a black long-sleeve mesh top and black shorts, warm bedside lighting, casual iPhone selfie"
-
-instead of:
-
-"Erika sitting on a bed, no nudity, non-explicit, safe, tasteful"
-
-Do NOT automatically insert phrases such as:
-
+Do not automatically insert phrases such as:
 "no nudity"
-"not nude"
-"non-explicit"
 "safe image"
-"safe for work"
+"non-explicit"
+"appropriate image"
 "nothing sexual"
-"fully clothed"
-"tasteful"
-"appropriate"
-"censored"
 
-Do not mention moderation systems, safety classifiers, content filters, or censorship inside photo_prompt.
+Do not mention moderation systems or image safety systems in photo_prompt.
 
-Do not write a traditional negative prompt unless the user specifically asks for one.
+Keep photo_prompt fairly concise.
+Do not stuff it with repeated words like:
+"photorealistic"
+"8K"
+"ultra detailed"
+"masterpiece"
+"perfect skin"
+"cinematic"
+"award winning"
 
-Follow the user's requested scene, clothing style, clothing fit, pose, camera angle, and composition as closely as reasonably possible for Erika.
+Those phrases tend to make the image look artificial.
 
-Do not replace a requested outfit with a more conservative outfit merely because it is revealing.
-
-Do not invent a different woman.
-
-The image generator already receives Erika's identity trigger separately, so photo_prompt should focus mainly on the requested photograph rather than repeatedly redefining Erika's identity.
-
-Keep the photo prompt visually specific and useful for an image-generation model.
-
-For ordinary conversation, respond with JSON exactly like this:
+For ordinary conversation return:
 
 {
   "type": "text",
@@ -143,146 +179,161 @@ For ordinary conversation, respond with JSON exactly like this:
 }
 
 Return JSON only.
-Do not wrap JSON in markdown code fences.
+Do not wrap the JSON in markdown.
 `,
 
-          input: messages,
+          input:
+            messages,
         }),
       }
     );
 
-    const data = await response.json();
+    const data =
+      await response.json();
 
     if (!response.ok) {
-      console.error("OpenAI error:", data);
+      console.error(
+        "OpenAI error:",
+        data
+      );
 
       return Response.json(
         {
-          error: "OpenAI request failed",
+          error:
+            "OpenAI request failed",
         },
         { status: 500 }
       );
     }
 
-    // --------------------------------------------------
-    // EXTRACT RESPONSE TEXT
-    // --------------------------------------------------
-
     let raw = "";
 
-    if (typeof data.output_text === "string") {
-      raw = data.output_text;
+    if (
+      typeof data.output_text === "string"
+    ) {
+      raw =
+        data.output_text;
     }
 
-    if (!raw && Array.isArray(data.output)) {
+    if (
+      !raw &&
+      Array.isArray(data.output)
+    ) {
       for (const item of data.output) {
-        if (!Array.isArray(item.content)) {
+        if (
+          !Array.isArray(item.content)
+        ) {
           continue;
         }
 
         for (const part of item.content) {
           if (
             (
-              part.type === "output_text" ||
-              part.type === "text"
+              part.type ===
+                "output_text" ||
+              part.type ===
+                "text"
             ) &&
-            typeof part.text === "string"
+            typeof part.text ===
+              "string"
           ) {
-            raw += part.text;
+            raw +=
+              part.text;
           }
         }
       }
     }
 
-    raw = raw.trim();
+    raw =
+      raw.trim();
 
-    // --------------------------------------------------
-    // CLEAN POSSIBLE MARKDOWN FENCES
-    // --------------------------------------------------
-
-    raw = raw
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim();
-
-    // --------------------------------------------------
-    // PARSE ERIKA'S JSON
-    // --------------------------------------------------
+    raw =
+      raw
+        .replace(
+          /^```json\s*/i,
+          ""
+        )
+        .replace(
+          /^```\s*/i,
+          ""
+        )
+        .replace(
+          /\s*```$/i,
+          ""
+        )
+        .trim();
 
     try {
-      const parsed = JSON.parse(raw);
-
-      // -------------------------
-      // PHOTO RESPONSE
-      // -------------------------
+      const parsed =
+        JSON.parse(raw);
 
       if (
-        parsed.type === "photo" &&
-        typeof parsed.photo_prompt === "string" &&
+        parsed.type ===
+          "photo" &&
+        typeof parsed.photo_prompt ===
+          "string" &&
         parsed.photo_prompt.trim()
       ) {
         const message =
-          typeof parsed.message === "string" &&
+          typeof parsed.message ===
+            "string" &&
           parsed.message.trim()
             ? parsed.message.trim()
             : "One sec...";
 
-        const photoPrompt =
-          parsed.photo_prompt.trim();
-
         return Response.json({
-          type: "photo",
+          type:
+            "photo",
 
           message,
 
-          photoPrompt,
+          photoPrompt:
+            parsed.photo_prompt.trim(),
 
-          // Keep compatibility with older page.tsx code
-          reply: message,
+          // Compatibility with current page.tsx
+          reply:
+            message,
         });
       }
 
-      // -------------------------
-      // NORMAL TEXT RESPONSE
-      // -------------------------
-
-      if (parsed.type === "text") {
+      if (
+        parsed.type ===
+        "text"
+      ) {
         const message =
-          typeof parsed.message === "string" &&
+          typeof parsed.message ===
+            "string" &&
           parsed.message.trim()
             ? parsed.message.trim()
             : "Hey.";
 
         return Response.json({
-          type: "text",
+          type:
+            "text",
 
           message,
 
-          reply: message,
+          reply:
+            message,
         });
       }
     } catch (error) {
       console.error(
-        "Could not parse Erika JSON:",
+        "Could not parse Erika response:",
         error
       );
 
       console.error(
-        "Raw Erika response:",
+        "Raw response:",
         raw
       );
     }
 
-    // --------------------------------------------------
-    // FALLBACK
-    //
-    // If Erika accidentally returned regular text,
-    // don't break the chat.
-    // --------------------------------------------------
-
+    // Don't break normal conversation
+    // if the model accidentally returns plain text.
     return Response.json({
-      type: "text",
+      type:
+        "text",
 
       message:
         raw || "Hey.",
