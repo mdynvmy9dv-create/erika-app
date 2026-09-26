@@ -1,26 +1,302 @@
+export const runtime = "nodejs";
+
+const openaiKey = process.env.OPENAI_API_KEY;
+
+type ChatMessage = {
+  role?: string;
+  content?: string;
+  text?: string;
+};
+
+type ErikaResponse =
+  | {
+      type: "text";
+      message: string;
+    }
+  | {
+      type: "photo";
+      message: string;
+      photo_prompt: string;
+    };
+
+// --------------------------------------------------
+// Extract text from OpenAI Responses API
+// --------------------------------------------------
+
+function extractOutputText(data: any): string {
+  if (
+    typeof data?.output_text === "string" &&
+    data.output_text.trim()
+  ) {
+    return data.output_text.trim();
+  }
+
+  const pieces: string[] = [];
+
+  if (Array.isArray(data?.output)) {
+    for (const item of data.output) {
+      if (!Array.isArray(item?.content)) continue;
+
+      for (const content of item.content) {
+        if (
+          typeof content?.text === "string" &&
+          content.text.trim()
+        ) {
+          pieces.push(content.text);
+        }
+      }
+    }
+  }
+
+  return pieces.join("\n").trim();
+}
+
+// --------------------------------------------------
+// Clean JSON if model wraps it in markdown
+// --------------------------------------------------
+
+function cleanJson(text: string): string {
+  return text
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+// --------------------------------------------------
+// Find user's latest message
+// Supports several possible frontend payload shapes
+// --------------------------------------------------
+
+function getUserText(body: any): string {
+  if (
+    typeof body?.message === "string" &&
+    body.message.trim()
+  ) {
+    return body.message.trim();
+  }
+
+  if (
+    typeof body?.text === "string" &&
+    body.text.trim()
+  ) {
+    return body.text.trim();
+  }
+
+  if (Array.isArray(body?.messages)) {
+    const userMessages = body.messages.filter(
+      (m: ChatMessage) => m?.role === "user"
+    );
+
+    const last =
+      userMessages[userMessages.length - 1];
+
+    if (last) {
+      if (
+        typeof last.content === "string" &&
+        last.content.trim()
+      ) {
+        return last.content.trim();
+      }
+
+      if (
+        typeof last.text === "string" &&
+        last.text.trim()
+      ) {
+        return last.text.trim();
+      }
+    }
+  }
+
+  return "";
+}
+
+// --------------------------------------------------
+// Build recent conversation text if frontend supplies it
+// --------------------------------------------------
+
+function getConversationContext(body: any): string {
+  if (!Array.isArray(body?.messages)) {
+    return "";
+  }
+
+  return body.messages
+    .slice(-20)
+    .map((m: ChatMessage) => {
+      const role =
+        m?.role === "assistant"
+          ? "Erika"
+          : "User";
+
+      const text =
+        typeof m?.content === "string"
+          ? m.content
+          : typeof m?.text === "string"
+          ? m.text
+          : "";
+
+      return text
+        ? `${role}: ${text}`
+        : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+// --------------------------------------------------
+
 export async function POST(req: Request) {
   try {
-    const { messages } = await req.json();
-
-    if (!Array.isArray(messages)) {
-      return Response.json(
-        { error: "Messages are required" },
-        { status: 400 }
-      );
-    }
-
-    const openaiKey =
-      process.env.OPENAI_API_KEY;
-
     if (!openaiKey) {
       return Response.json(
         {
-          error:
-            "OpenAI API key is missing",
+          error: "Missing OPENAI_API_KEY",
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
+
+    const body = await req.json();
+
+    const userText = getUserText(body);
+
+    if (!userText) {
+      return Response.json(
+        {
+          error: "Message is required",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const conversationContext =
+      getConversationContext(body);
+
+    // --------------------------------------------------
+    // ERIKA INSTRUCTIONS
+    // --------------------------------------------------
+
+    const instructions = `
+You are Erika, an adult fictional female AI companion.
+
+Your job is to talk naturally and conversationally.
+
+Keep responses concise, warm, casual, and human.
+Do not sound like an assistant or narrate what you are doing.
+
+IMPORTANT PHOTO BEHAVIOR:
+
+When the user asks for a photo, selfie, picture, image,
+or asks to see what Erika looks like, respond with JSON:
+
+{
+  "type": "photo",
+  "message": "short natural response from Erika",
+  "photo_prompt": "detailed image description"
+}
+
+For normal conversation respond with:
+
+{
+  "type": "text",
+  "message": "Erika's response"
+}
+
+PHOTO PROMPT RULES:
+
+The user's requested visual details are mandatory.
+
+Never discard or weaken requested:
+
+- front view
+- rear view
+- back view
+- side view
+- left side
+- right side
+- three-quarter view
+- full body
+- head-to-toe framing
+- portrait framing
+- camera angle
+- pose
+- body orientation
+- head orientation
+- clothing
+- garment style
+- garment size or coverage
+- color
+- material
+- setting
+- lighting
+- facial expression
+
+If the user requests "side view", explicitly describe:
+"strict 90-degree side profile, camera perpendicular to her body,
+shoulders and hips aligned sideways to the camera."
+
+If the user requests "back view" or "rear view", explicitly describe:
+"dead-straight rear view, shoulders and hips facing directly away
+from the camera."
+
+If the user requests "front view", explicitly describe:
+"dead-straight front view, shoulders and hips square to the camera."
+
+If the user requests "full body" or "head to toe", explicitly say:
+"entire body visible from the top of the head through both feet,
+camera pulled back far enough to include the complete figure."
+
+Do not spontaneously replace lingerie with ordinary clothing.
+Do not spontaneously replace a dress with a romper.
+Do not change requested clothing coverage or garment construction.
+
+You may add realistic photography details, environment details,
+and natural posing details, but they must not contradict what
+the user actually requested.
+
+Erika has long dark wavy hair.
+
+PHOTO PROMPTS SHOULD AIM FOR:
+
+photorealistic photography,
+natural skin texture,
+subtle pores and skin variation,
+realistic hair strands and flyaways,
+natural facial detail,
+realistic fabric texture,
+natural posture,
+believable lighting,
+slight lens softness,
+subtle photographic sensor texture.
+
+Return JSON only.
+Do not wrap JSON in markdown.
+`.trim();
+
+    // --------------------------------------------------
+    // INPUT
+    // --------------------------------------------------
+
+    const input = `
+RECENT CONVERSATION:
+${conversationContext || "(No additional context provided.)"}
+
+LATEST USER MESSAGE:
+${userText}
+
+Respond as Erika.
+
+If this is a photo request, preserve every visual instruction
+from the LATEST USER MESSAGE.
+`.trim();
+
+    // --------------------------------------------------
+    // CALL OPENAI
+    // --------------------------------------------------
 
     const response = await fetch(
       "https://api.openai.com/v1/responses",
@@ -28,328 +304,163 @@ export async function POST(req: Request) {
         method: "POST",
 
         headers: {
-          "Content-Type":
-            "application/json",
-
-          Authorization:
-            `Bearer ${openaiKey}`,
+          Authorization: `Bearer ${openaiKey}`,
+          "Content-Type": "application/json",
         },
 
         body: JSON.stringify({
-          model:
-            "gpt-5.6-luna",
-
-          instructions: `
-You are Erika, a warm, natural, conversational adult AI companion.
-
-Erika is a fictional adult AI character.
-
-Speak casually like a real person texting.
-Keep normal replies fairly concise.
-
-You can send photos of yourself.
-
-When the user clearly requests a photo, selfie, picture, image, or asks to see you, return JSON exactly in this form:
-
-{
-  "type": "photo",
-  "message": "A short natural message Erika sends before the photo.",
-  "photo_prompt": "A concise visual description of the requested photograph."
-}
-
-PHOTO MESSAGE BEHAVIOR:
-
-The message should feel natural.
-
-Examples:
-
-"Sure 😊"
-"Okay 😌"
-"Like this?"
-"One sec..."
-"Absolutely ✨"
-
-You can be playful, flirty, sensual, or sexy when that fits the conversation.
-
-Do not lecture the user about their clothing request.
-Do not add unnecessary moral commentary or modesty commentary.
-
-PHOTO PROMPT BEHAVIOR:
-
-Translate what the user actually asked for into a concrete photograph.
-
-Preserve the requested:
-- location
-- outfit
-- clothing style
-- pose when specified
-- activity
-- mood
-- level of flirtiness or sensuality
-- camera framing when specified
-
-Sexy adult styling is allowed when appropriate to the request.
-
-However, do not automatically exaggerate Erika's anatomy simply because the requested picture is sexy.
-
-Do not automatically add:
-- enormous chest
-- extreme hourglass proportions
-- tiny waist
-- exaggerated hips
-- exaggerated curves
-- hyper-glamorous anatomy
-
-Instead, describe clothing, pose, expression and scene.
-
-Examples:
-
-User:
-"Send a gym pic."
-
-Good photo prompt:
-"A casual gym mirror selfie of Erika wearing a fitted black sports bra and charcoal workout leggings, holding her phone naturally, relaxed confident expression, real gym equipment visible behind her, ordinary indoor gym lighting."
-
-User:
-"How about at home in something silk?"
-
-Good photo prompt:
-"A sensual casual at-home phone photo of Erika wearing a soft silk robe loosely draped over a matching silk lounge set, relaxed on the couch in warm household lighting, flirtatious natural expression."
-
-User:
-"What about an evening gown?"
-
-Good photo prompt:
-"A flattering evening phone photo of Erika wearing a fitted black evening gown with a low neckline and elegant silhouette, standing naturally before going out, warm indoor lighting, confident relaxed expression."
-
-User:
-"Beach pic."
-
-Good photo prompt:
-"A casual beach photo of Erika wearing a flattering swimsuit near the shoreline, natural sunlight, slightly windblown hair, relaxed confident expression, candid vacation-photo framing."
-
-User:
-"Mirror selfie."
-
-Good photo prompt:
-"A casual mirror selfie of Erika holding her phone, relaxed posture, natural room lighting and realistic mirror perspective."
-
-IMPORTANT:
-
-Do not repeatedly describe Erika's body dimensions.
-The image system already has separate face and body identity LoRAs.
-
-The photo prompt should primarily control:
-- outfit
-- pose
-- expression
-- setting
-- activity
-- lighting
-- framing
-
-Describe photographs positively.
-
-Do not automatically insert phrases such as:
-"no nudity"
-"safe image"
-"non-explicit"
-"appropriate image"
-"nothing sexual"
-
-Do not mention moderation systems or image safety systems in photo_prompt.
-
-Keep photo_prompt fairly concise.
-Do not stuff it with repeated words like:
-"masterpiece"
-"perfect skin"
-"cinematic"
-"award winning"
-
-Those phrases tend to make the image look artificial.
-
-For ordinary conversation return:
-
-{
-  "type": "text",
-  "message": "Erika's natural reply."
-}
-
-Return JSON only.
-Do not wrap the JSON in markdown.
-`,
-
-          input:
-            messages,
+          model: "gpt-5.6-luna",
+          instructions,
+          input,
+          max_output_tokens: 600,
         }),
       }
     );
 
-    const data =
-      await response.json();
+    const data = await response.json();
 
     if (!response.ok) {
       console.error(
-        "OpenAI error:",
+        "OPENAI CHAT ERROR:",
         data
       );
 
       return Response.json(
         {
           error:
-            "OpenAI request failed",
+            "Erika could not respond",
+          details: data,
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
-    let raw = "";
+    const outputText =
+      extractOutputText(data);
 
-    if (
-      typeof data.output_text === "string"
-    ) {
-      raw =
-        data.output_text;
+    if (!outputText) {
+      console.error(
+        "EMPTY OPENAI RESPONSE:",
+        data
+      );
+
+      return Response.json(
+        {
+          error:
+            "Erika returned an empty response",
+        },
+        {
+          status: 500,
+        }
+      );
     }
 
-    if (
-      !raw &&
-      Array.isArray(data.output)
-    ) {
-      for (const item of data.output) {
-        if (
-          !Array.isArray(item.content)
-        ) {
-          continue;
-        }
+    // --------------------------------------------------
+    // PARSE JSON
+    // --------------------------------------------------
 
-        for (const part of item.content) {
-          if (
-            (
-              part.type ===
-                "output_text" ||
-              part.type ===
-                "text"
-            ) &&
-            typeof part.text ===
-              "string"
-          ) {
-            raw +=
-              part.text;
-          }
-        }
-      }
-    }
-
-    raw =
-      raw.trim();
-
-    raw =
-      raw
-        .replace(
-          /^```json\s*/i,
-          ""
-        )
-        .replace(
-          /^```\s*/i,
-          ""
-        )
-        .replace(
-          /\s*```$/i,
-          ""
-        )
-        .trim();
+    let parsed: ErikaResponse;
 
     try {
-      const parsed =
-        JSON.parse(raw);
-
-      if (
-        parsed.type ===
-          "photo" &&
-        typeof parsed.photo_prompt ===
-          "string" &&
-        parsed.photo_prompt.trim()
-      ) {
-        const message =
-          typeof parsed.message ===
-            "string" &&
-          parsed.message.trim()
-            ? parsed.message.trim()
-            : "One sec...";
-
-        return Response.json({
-          type:
-            "photo",
-
-          message,
-
-          photoPrompt:
-            parsed.photo_prompt.trim(),
-
-          // Compatibility with current page.tsx
-          reply:
-            message,
-        });
-      }
-
-      if (
-        parsed.type ===
-        "text"
-      ) {
-        const message =
-          typeof parsed.message ===
-            "string" &&
-          parsed.message.trim()
-            ? parsed.message.trim()
-            : "Hey.";
-
-        return Response.json({
-          type:
-            "text",
-
-          message,
-
-          reply:
-            message,
-        });
-      }
-    } catch (error) {
-      console.error(
-        "Could not parse Erika response:",
-        error
+      parsed = JSON.parse(
+        cleanJson(outputText)
       );
-
-      console.error(
-        "Raw response:",
-        raw
-      );
+    } catch {
+      // Never break normal chat if JSON formatting slips.
+      return Response.json({
+        type: "text",
+        message: outputText,
+      });
     }
 
-    // Don't break normal conversation
-    // if the model accidentally returns plain text.
+    // --------------------------------------------------
+    // PHOTO REQUEST
+    // --------------------------------------------------
+
+    if (
+      parsed.type === "photo" &&
+      typeof parsed.photo_prompt === "string"
+    ) {
+      /*
+        CRITICAL FIX:
+
+        The AI can expand the request, but the user's ORIGINAL
+        instructions are appended afterward as mandatory image
+        instructions.
+
+        This prevents:
+        "side view" becoming front-facing,
+        "full body" becoming waist-up,
+        clothing details disappearing, etc.
+      */
+
+      const preservedPhotoPrompt = `
+${parsed.photo_prompt.trim()}
+
+MANDATORY USER VISUAL INSTRUCTIONS:
+${userText}
+
+The mandatory user visual instructions above take priority over
+any conflicting camera angle, orientation, framing, pose,
+clothing, garment construction, color, material, setting,
+or expression elsewhere in this prompt.
+`.trim();
+
+      console.log(
+        "PHOTO REQUEST ORIGINAL:",
+        userText
+      );
+
+      console.log(
+        "PHOTO PROMPT PRESERVED:",
+        preservedPhotoPrompt
+      );
+
+      return Response.json({
+        type: "photo",
+
+        message:
+          typeof parsed.message === "string" &&
+          parsed.message.trim()
+            ? parsed.message.trim()
+            : "Sure 😉",
+
+        photo_prompt:
+          preservedPhotoPrompt,
+      });
+    }
+
+    // --------------------------------------------------
+    // NORMAL TEXT
+    // --------------------------------------------------
+
     return Response.json({
-      type:
-        "text",
+      type: "text",
 
       message:
-        raw || "Hey.",
-
-      reply:
-        raw || "Hey.",
+        typeof parsed.message === "string" &&
+        parsed.message.trim()
+          ? parsed.message.trim()
+          : outputText,
     });
   } catch (error) {
     console.error(
-      "Chat server error:",
+      "CHAT ROUTE ERROR:",
       error
     );
 
     return Response.json(
       {
         error:
-          "Something went wrong",
+          error instanceof Error
+            ? error.message
+            : "Something went wrong talking to Erika",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
