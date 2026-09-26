@@ -93,23 +93,26 @@ unretouched realistic photography
         },
 
         body: JSON.stringify({
-          input: {
-            prompt: finalPrompt,
+input: {
+  prompt: finalPrompt,
 
-            lora_weights: ERIKA_LORA_WEIGHTS,
-            lora_scale: 1,
+  lora_weights: ERIKA_LORA_WEIGHTS,
+  lora_scale: 1,
 
-            guidance: 2.5,
-            num_inference_steps: 28,
+  guidance: 2.5,
+  num_inference_steps: 28,
 
-            aspect_ratio: "4:5",
-            num_outputs: 1,
+  aspect_ratio: "4:5",
+  num_outputs: 1,
 
-            go_fast: false,
-            megapixels: "1",
+  disable_safety_checker: true,
 
-            output_format: "jpg",
-            output_quality: 95,
+  go_fast: false,
+  megapixels: "1",
+
+  output_format: "jpg",
+  output_quality: 95,
+},
           },
         }),
       }
