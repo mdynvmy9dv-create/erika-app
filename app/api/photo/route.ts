@@ -14,21 +14,12 @@ const ERIKA_TRIGGER = "ERIKAFINAL";
 const ERIKA_LORA_WEIGHTS =
   "https://replicate.delivery/xezq/eOU7OpAeaHlwoEavigAhW5vYackREGjOGY3LCyv1MwWcAeiuA/flux-lora.tar";
 
-// =====================================================
-// REALISM LORA
-//
-// Exact direct weights URL that previously worked.
-// =====================================================
-
+// Exact realism weights URL that worked for you
 const REALISM_LORA =
   "https://huggingface.co/XLabs-AI/flux-RealismLora/resolve/main/lora.safetensors";
 
 const ERIKA_LORA_SCALE = 1.0;
 const REALISM_LORA_SCALE = 0.55;
-
-// =====================================================
-// REPLICATE RUNNER
-// =====================================================
 
 const REPLICATE_RUNNER =
   "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions";
@@ -39,31 +30,43 @@ const REPLICATE_RUNNER =
 
 export async function POST(req: Request) {
   try {
-    // -------------------------------------------------
-    // READ REQUEST
-    // -------------------------------------------------
-
     const body = await req.json();
 
+    console.log("PHOTO BODY RECEIVED:", body);
+
+    // Accept every likely field name from the existing app
+    const rawPrompt =
+      body?.prompt ??
+      body?.photo_prompt ??
+      body?.photoPrompt ??
+      body?.message ??
+      body?.text ??
+      "";
+
     const prompt =
-      typeof body?.prompt === "string"
-        ? body.prompt.trim()
+      typeof rawPrompt === "string"
+        ? rawPrompt.trim()
         : "";
 
     if (!prompt) {
+      console.error(
+        "PHOTO ROUTE: no prompt found in request body:",
+        body
+      );
+
       return Response.json(
         {
-          error: "Prompt is required",
+          error: "No photo prompt received",
+          receivedKeys:
+            body && typeof body === "object"
+              ? Object.keys(body)
+              : [],
         },
         {
           status: 400,
         }
       );
     }
-
-    // -------------------------------------------------
-    // CHECK ENVIRONMENT VARIABLES
-    // -------------------------------------------------
 
     if (!replicateToken) {
       return Response.json(
@@ -89,7 +92,7 @@ export async function POST(req: Request) {
     }
 
     // =================================================
-    // BUILD FINAL PROMPT
+    // FINAL IMAGE PROMPT
     // =================================================
 
     const finalPrompt = `
@@ -109,7 +112,6 @@ natural fabric folds and compression,
 natural body posture,
 realistic anatomy,
 natural human proportions,
-realistic hands and fingers,
 believable natural lighting,
 realistic shadows,
 slight optical lens softness,
@@ -121,16 +123,14 @@ unretouched appearance,
 authentic candid photography
 `.trim();
 
-    console.log("======================================");
-    console.log("ERIKAFINAL PHOTO GENERATION");
+    console.log("====================================");
+    console.log("ERIKAFINAL PHOTO");
     console.log("Original prompt:", prompt);
     console.log("Final prompt:", finalPrompt);
-    console.log("Erika LoRA scale:", ERIKA_LORA_SCALE);
-    console.log("Realism LoRA scale:", REALISM_LORA_SCALE);
-    console.log("======================================");
+    console.log("====================================");
 
     // =================================================
-    // START REPLICATE GENERATION
+    // START REPLICATE
     // =================================================
 
     const predictionResponse = await fetch(
@@ -141,44 +141,27 @@ authentic candid photography
         headers: {
           Authorization: `Bearer ${replicateToken}`,
           "Content-Type": "application/json",
-
-          // If warm, Replicate may return the completed
-          // prediction without needing much polling.
-          Prefer: "wait=60",
         },
 
         body: JSON.stringify({
           input: {
-            // ------------------------------------------
-            // PROMPT
-            // ------------------------------------------
-
             prompt: finalPrompt,
 
-            // ------------------------------------------
-            // PRIMARY LORA — ERIKA
-            // ------------------------------------------
-
+            // Erika
             lora_weights:
               ERIKA_LORA_WEIGHTS,
 
             lora_scale:
               ERIKA_LORA_SCALE,
 
-            // ------------------------------------------
-            // SECOND LORA — REALISM
-            // ------------------------------------------
-
+            // Realism
             extra_lora:
               REALISM_LORA,
 
             extra_lora_scale:
               REALISM_LORA_SCALE,
 
-            // ------------------------------------------
-            // GENERATION SETTINGS
-            // ------------------------------------------
-
+            // Rendering
             guidance:
               2.2,
 
@@ -210,10 +193,6 @@ authentic candid photography
     let prediction =
       await predictionResponse.json();
 
-    // =================================================
-    // START ERROR
-    // =================================================
-
     if (!predictionResponse.ok) {
       console.error(
         "REPLICATE START ERROR:",
@@ -235,13 +214,13 @@ authentic candid photography
     }
 
     console.log(
-      "Prediction created:",
+      "ERIKA PREDICTION CREATED:",
       prediction.id,
       prediction.status
     );
 
     // =================================================
-    // POLL UNTIL COMPLETE
+    // POLL REPLICATE
     // =================================================
 
     let attempts = 0;
@@ -296,13 +275,13 @@ authentic candid photography
       prediction = checkData;
 
       console.log(
-        "ERIKAFINAL STATUS:",
+        "ERIKA STATUS:",
         prediction.status
       );
     }
 
     // =================================================
-    // FAILED
+    // FAILURE
     // =================================================
 
     if (prediction.status === "failed") {
@@ -329,10 +308,6 @@ authentic candid photography
       );
     }
 
-    // =================================================
-    // CANCELED
-    // =================================================
-
     if (prediction.status === "canceled") {
       return Response.json(
         {
@@ -347,10 +322,6 @@ authentic candid photography
         }
       );
     }
-
-    // =================================================
-    // TIMEOUT
-    // =================================================
 
     if (prediction.status !== "succeeded") {
       return Response.json(
@@ -371,7 +342,7 @@ authentic candid photography
     }
 
     // =================================================
-    // GET OUTPUT IMAGE
+    // GET GENERATED IMAGE
     // =================================================
 
     const replicateImageUrl =
@@ -399,13 +370,8 @@ authentic candid photography
       );
     }
 
-    console.log(
-      "Generated image URL:",
-      replicateImageUrl
-    );
-
     // =================================================
-    // DOWNLOAD IMAGE FROM REPLICATE
+    // DOWNLOAD IMAGE
     // =================================================
 
     const imageResponse =
@@ -435,15 +401,11 @@ authentic candid photography
       await imageResponse.arrayBuffer();
 
     // =================================================
-    // CREATE PERMANENT FILE NAME
+    // SAVE TO SUPABASE
     // =================================================
 
     const fileName =
       `erika-${Date.now()}-${crypto.randomUUID()}.jpg`;
-
-    // =================================================
-    // UPLOAD TO SUPABASE
-    // =================================================
 
     const uploadResponse = await fetch(
       `${supabaseUrl}/storage/v1/object/erika-photos/${fileName}`,
@@ -493,7 +455,7 @@ authentic candid photography
     }
 
     // =================================================
-    // PERMANENT SUPABASE URL
+    // PERMANENT URL
     // =================================================
 
     const permanentImageUrl =
@@ -507,6 +469,13 @@ authentic candid photography
       image:
         permanentImageUrl,
 
+      // Include this too in case the frontend expects imageUrl
+      imageUrl:
+        permanentImageUrl,
+
+      type:
+        "photo",
+
       metadata: {
         prediction_id:
           prediction.id,
@@ -517,17 +486,8 @@ authentic candid photography
         trigger:
           ERIKA_TRIGGER,
 
-        runner:
-          "black-forest-labs/flux-dev-lora",
-
-        erika_lora:
-          ERIKA_LORA_WEIGHTS,
-
         erika_lora_scale:
           ERIKA_LORA_SCALE,
-
-        realism_lora:
-          REALISM_LORA,
 
         realism_lora_scale:
           REALISM_LORA_SCALE,
@@ -537,9 +497,6 @@ authentic candid photography
 
         steps:
           28,
-
-        aspect_ratio:
-          "4:5",
 
         original_prompt:
           prompt,
