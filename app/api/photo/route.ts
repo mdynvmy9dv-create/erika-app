@@ -4,8 +4,8 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const replicateToken = process.env.REPLICATE_API_TOKEN;
 
-// New unified Erika character LoRA
-const ERIKA_MODEL = "mdynvmy9dv-create/erika";
+// New unified Erika LoRA
+const ERIKA_MODEL = "mdynvmy9dv-create/erika9dv";
 const ERIKA_TRIGGER = "erika9dv";
 
 export async function POST(req: Request) {
@@ -36,9 +36,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // --------------------------------------------------
-    // GET LATEST VERSION OF NEW ERIKA MODEL
-    // --------------------------------------------------
+    // --------------------------------------------
+    // GET LATEST VERSION OF ERIKA MODEL
+    // --------------------------------------------
 
     const modelResponse = await fetch(
       `https://api.replicate.com/v1/models/${ERIKA_MODEL}`,
@@ -60,21 +60,20 @@ export async function POST(req: Request) {
       return Response.json(
         {
           error:
-            "Could not load the new Erika model",
+            "Could not load Erika model",
+          details: text,
         },
         { status: 500 }
       );
     }
 
-    const modelData =
-      await modelResponse.json();
+    const modelData = await modelResponse.json();
 
-    const version =
-      modelData.latest_version?.id;
+    const version = modelData.latest_version?.id;
 
     if (!version) {
       console.error(
-        "No Erika model version found:",
+        "No model version found:",
         modelData
       );
 
@@ -87,9 +86,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // --------------------------------------------------
-    // BUILD PHOTO PROMPT
-    // --------------------------------------------------
+    // --------------------------------------------
+    // BUILD IMAGE PROMPT
+    // --------------------------------------------
 
     const finalPrompt = `
 ${ERIKA_TRIGGER}, ${prompt}
@@ -97,20 +96,19 @@ ${ERIKA_TRIGGER}, ${prompt}
 realistic candid smartphone photograph,
 natural skin texture,
 subtle pores and skin variation,
-realistic individual hair strands,
+realistic hair texture,
 natural facial detail,
-soft available lighting,
+soft natural lighting,
 slight lens softness,
 subtle sensor noise,
-believable anatomy,
 natural feminine proportions,
-unretouched appearance,
-ordinary real-life photography
+realistic anatomy,
+unretouched real-life photography
 `.trim();
 
-    // --------------------------------------------------
-    // START IMAGE GENERATION
-    // --------------------------------------------------
+    // --------------------------------------------
+    // START REPLICATE PREDICTION
+    // --------------------------------------------
 
     const predictionResponse = await fetch(
       "https://api.replicate.com/v1/predictions",
@@ -118,49 +116,33 @@ ordinary real-life photography
         method: "POST",
 
         headers: {
-          Authorization:
-            `Bearer ${replicateToken}`,
-
-          "Content-Type":
-            "application/json",
-
-          Prefer:
-            "wait",
+          Authorization: `Bearer ${replicateToken}`,
+          "Content-Type": "application/json",
         },
 
         body: JSON.stringify({
           version,
 
           input: {
-            prompt:
-              finalPrompt,
+            prompt: finalPrompt,
 
-            aspect_ratio:
-              "4:5",
+            aspect_ratio: "4:5",
 
-            num_outputs:
-              1,
+            num_outputs: 1,
 
-            num_inference_steps:
-              28,
+            num_inference_steps: 28,
 
-            guidance_scale:
-              2.17,
+            guidance_scale: 2.17,
 
-            lora_scale:
-              1.0,
+            lora_scale: 1.0,
 
-            output_format:
-              "jpg",
+            output_format: "jpg",
 
-            output_quality:
-              95,
+            output_quality: 95,
 
-            megapixels:
-              "1",
+            megapixels: "1",
 
-            go_fast:
-              false,
+            go_fast: false,
           },
         }),
       }
@@ -187,43 +169,35 @@ ordinary real-life photography
       );
     }
 
-    let prediction =
-      predictionData;
+    let prediction = predictionData;
 
-    // --------------------------------------------------
-    // WAIT FOR GENERATION
-    // --------------------------------------------------
+    // --------------------------------------------
+    // POLL UNTIL IMAGE FINISHES
+    // --------------------------------------------
 
     for (let i = 0; i < 60; i++) {
       if (
-        prediction.status ===
-          "succeeded" ||
-        prediction.status ===
-          "failed" ||
-        prediction.status ===
-          "canceled"
+        prediction.status === "succeeded" ||
+        prediction.status === "failed" ||
+        prediction.status === "canceled"
       ) {
         break;
       }
 
-      await new Promise(
-        (resolve) =>
-          setTimeout(resolve, 1000)
+      await new Promise((resolve) =>
+        setTimeout(resolve, 1000)
       );
 
-      const checkResponse =
-        await fetch(
-          `https://api.replicate.com/v1/predictions/${prediction.id}`,
-          {
-            headers: {
-              Authorization:
-                `Bearer ${replicateToken}`,
-            },
-          }
-        );
+      const checkResponse = await fetch(
+        `https://api.replicate.com/v1/predictions/${prediction.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${replicateToken}`,
+          },
+        }
+      );
 
-      const checkData =
-        await checkResponse.json();
+      const checkData = await checkResponse.json();
 
       if (!checkResponse.ok) {
         console.error(
@@ -240,18 +214,14 @@ ordinary real-life photography
         );
       }
 
-      prediction =
-        checkData;
+      prediction = checkData;
     }
 
-    // --------------------------------------------------
-    // HANDLE GENERATION FAILURE
-    // --------------------------------------------------
+    // --------------------------------------------
+    // HANDLE FAILURE
+    // --------------------------------------------
 
-    if (
-      prediction.status !==
-      "succeeded"
-    ) {
+    if (prediction.status !== "succeeded") {
       console.error(
         "Erika prediction failed:",
         prediction
@@ -273,21 +243,18 @@ ordinary real-life photography
       );
     }
 
-    // --------------------------------------------------
-    // GET GENERATED IMAGE
-    // --------------------------------------------------
+    // --------------------------------------------
+    // GET REPLICATE IMAGE URL
+    // --------------------------------------------
 
     const replicateImageUrl =
-      Array.isArray(
-        prediction.output
-      )
+      Array.isArray(prediction.output)
         ? prediction.output[0]
         : prediction.output;
 
     if (
       !replicateImageUrl ||
-      typeof replicateImageUrl !==
-        "string"
+      typeof replicateImageUrl !== "string"
     ) {
       return Response.json(
         {
@@ -298,14 +265,12 @@ ordinary real-life photography
       );
     }
 
-    // --------------------------------------------------
-    // DOWNLOAD FROM REPLICATE
-    // --------------------------------------------------
+    // --------------------------------------------
+    // DOWNLOAD IMAGE
+    // --------------------------------------------
 
     const imageResponse =
-      await fetch(
-        replicateImageUrl
-      );
+      await fetch(replicateImageUrl);
 
     if (!imageResponse.ok) {
       const text =
@@ -328,38 +293,34 @@ ordinary real-life photography
     const imageBytes =
       await imageResponse.arrayBuffer();
 
-    // --------------------------------------------------
-    // SAVE PERMANENTLY TO SUPABASE
-    // --------------------------------------------------
+    // --------------------------------------------
+    // SAVE IMAGE TO SUPABASE
+    // --------------------------------------------
 
     const fileName =
       `erika-${Date.now()}-${crypto.randomUUID()}.jpg`;
 
-    const uploadResponse =
-      await fetch(
-        `${supabaseUrl}/storage/v1/object/erika-photos/${fileName}`,
-        {
-          method:
-            "POST",
+    const uploadResponse = await fetch(
+      `${supabaseUrl}/storage/v1/object/erika-photos/${fileName}`,
+      {
+        method: "POST",
 
-          headers: {
-            apikey:
-              supabaseKey,
+        headers: {
+          apikey: supabaseKey,
 
-            Authorization:
-              `Bearer ${supabaseKey}`,
+          Authorization:
+            `Bearer ${supabaseKey}`,
 
-            "Content-Type":
-              "image/jpeg",
+          "Content-Type":
+            "image/jpeg",
 
-            "x-upsert":
-              "false",
-          },
+          "x-upsert":
+            "false",
+        },
 
-          body:
-            imageBytes,
-        }
-      );
+        body: imageBytes,
+      }
+    );
 
     if (!uploadResponse.ok) {
       const uploadError =
@@ -382,16 +343,15 @@ ordinary real-life photography
       );
     }
 
-    // --------------------------------------------------
-    // PERMANENT PUBLIC IMAGE URL
-    // --------------------------------------------------
+    // --------------------------------------------
+    // PERMANENT SUPABASE URL
+    // --------------------------------------------
 
     const permanentImageUrl =
       `${supabaseUrl}/storage/v1/object/public/erika-photos/${fileName}`;
 
     return Response.json({
-      image:
-        permanentImageUrl,
+      image: permanentImageUrl,
 
       metadata: {
         replicate_prediction_id:
