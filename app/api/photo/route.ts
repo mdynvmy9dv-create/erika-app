@@ -1,28 +1,60 @@
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
+const replicateToken = process.env.REPLICATE_API_TOKEN;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const replicateToken = process.env.REPLICATE_API_TOKEN;
 
-// New unified Erika LoRA
-const ERIKA_MODEL = "mdynvmy9dv-create/erika9dv";
-const ERIKA_TRIGGER = "erika9dv";
+// --------------------------------------------------
+// ERIKA V2
+// --------------------------------------------------
+
+const ERIKA_TRIGGER = "ERIKA407";
+
+const ERIKA_LORA_WEIGHTS =
+  "https://replicate.delivery/xezq/foQjh8G9WnQ2IanVxAScVn2xJRJGeMmfffM0rKWHecWc4bU0F/flux-lora.tar";
+
+const REPLICATE_RUNNER =
+  "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions";
+
+// --------------------------------------------------
 
 export async function POST(req: Request) {
   try {
-    const { prompt } = await req.json();
+    // --------------------------------------------------
+    // READ REQUEST
+    // --------------------------------------------------
 
-    if (!prompt || typeof prompt !== "string") {
+    const body = await req.json();
+
+    const prompt =
+      typeof body?.prompt === "string"
+        ? body.prompt.trim()
+        : "";
+
+    if (!prompt) {
       return Response.json(
-        { error: "Prompt is required" },
-        { status: 400 }
+        {
+          error: "Prompt is required",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
+    // --------------------------------------------------
+    // CHECK ENVIRONMENT VARIABLES
+    // --------------------------------------------------
+
     if (!replicateToken) {
       return Response.json(
-        { error: "Missing REPLICATE_API_TOKEN" },
-        { status: 500 }
+        {
+          error: "Missing REPLICATE_API_TOKEN",
+        },
+        {
+          status: 500,
+        }
       );
     }
 
@@ -32,198 +64,177 @@ export async function POST(req: Request) {
           error:
             "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY",
         },
-        { status: 500 }
-      );
-    }
-
-    // --------------------------------------------
-    // GET LATEST VERSION OF ERIKA MODEL
-    // --------------------------------------------
-
-    const modelResponse = await fetch(
-      `https://api.replicate.com/v1/models/${ERIKA_MODEL}`,
-      {
-        headers: {
-          Authorization: `Bearer ${replicateToken}`,
-        },
-      }
-    );
-
-    if (!modelResponse.ok) {
-      const text = await modelResponse.text();
-
-      console.error(
-        "Replicate model lookup error:",
-        text
-      );
-
-      return Response.json(
         {
-          error:
-            "Could not load Erika model",
-          details: text,
-        },
-        { status: 500 }
+          status: 500,
+        }
       );
     }
 
-    const modelData = await modelResponse.json();
-
-    const version = modelData.latest_version?.id;
-
-    if (!version) {
-      console.error(
-        "No model version found:",
-        modelData
-      );
-
-      return Response.json(
-        {
-          error:
-            "No trained Erika model version found",
-        },
-        { status: 500 }
-      );
-    }
-
-    // --------------------------------------------
-    // BUILD IMAGE PROMPT
-    // --------------------------------------------
+    // --------------------------------------------------
+    // BUILD ERIKA PROMPT
+    // --------------------------------------------------
 
     const finalPrompt = `
 ${ERIKA_TRIGGER}, ${prompt}
 
-realistic candid smartphone photograph,
-natural skin texture,
-subtle pores and skin variation,
-realistic hair texture,
-natural facial detail,
-soft natural lighting,
-slight lens softness,
-subtle sensor noise,
+realistic photograph of the same adult woman,
 natural feminine proportions,
-realistic anatomy,
-unretouched real-life photography
+realistic skin texture,
+subtle pores and natural skin variation,
+realistic individual hair strands and flyaways,
+natural facial detail,
+realistic fabric texture,
+natural posture,
+soft believable lighting,
+slight camera lens softness,
+subtle photographic sensor texture,
+highly realistic photography
 `.trim();
 
-    // --------------------------------------------
-    // START REPLICATE PREDICTION
-    // --------------------------------------------
+    console.log("ERIKA PHOTO PROMPT:", finalPrompt);
+
+    // --------------------------------------------------
+    // CREATE REPLICATE PREDICTION
+    //
+    // This uses the SAME FLUX DEV LORA runner
+    // that successfully generated ERIKA407 manually.
+    // --------------------------------------------------
 
     const predictionResponse = await fetch(
-      "https://api.replicate.com/v1/predictions",
+      REPLICATE_RUNNER,
       {
         method: "POST",
 
         headers: {
           Authorization: `Bearer ${replicateToken}`,
           "Content-Type": "application/json",
+
+          // Give Replicate a chance to return the finished
+          // image immediately when the model is warm.
+          Prefer: "wait=60",
         },
 
         body: JSON.stringify({
-          version,
-
           input: {
             prompt: finalPrompt,
 
-            aspect_ratio: "4:5",
+            lora_weights: ERIKA_LORA_WEIGHTS,
 
-            num_outputs: 1,
+            lora_scale: 1,
+
+            guidance: 2.5,
 
             num_inference_steps: 28,
 
-            guidance_scale: 2.17,
+            num_outputs: 1,
 
-            lora_scale: 1.0,
-
-            output_format: "jpg",
-
-            output_quality: 95,
+            aspect_ratio: "4:5",
 
             megapixels: "1",
 
             go_fast: false,
+
+            output_format: "webp",
+
+            output_quality: 95,
           },
         }),
       }
     );
 
-    const predictionData =
+    let prediction =
       await predictionResponse.json();
 
     if (!predictionResponse.ok) {
       console.error(
-        "Replicate prediction error:",
-        predictionData
+        "Replicate creation error:",
+        prediction
       );
 
       return Response.json(
         {
           error:
-            "Failed to start Erika photo generation",
-
-          details:
-            predictionData,
+            "Replicate could not start the Erika photo",
+          details: prediction,
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
-    let prediction = predictionData;
+    console.log(
+      "ERIKA PREDICTION CREATED:",
+      prediction.id,
+      prediction.status
+    );
 
-    // --------------------------------------------
-    // POLL UNTIL IMAGE FINISHES
-    // --------------------------------------------
+    // --------------------------------------------------
+    // POLL IF REPLICATE DID NOT FINISH IMMEDIATELY
+    // --------------------------------------------------
 
-    for (let i = 0; i < 60; i++) {
-      if (
-        prediction.status === "succeeded" ||
-        prediction.status === "failed" ||
-        prediction.status === "canceled"
-      ) {
-        break;
-      }
+    let attempts = 0;
 
+    while (
+      prediction.status !== "succeeded" &&
+      prediction.status !== "failed" &&
+      prediction.status !== "canceled" &&
+      attempts < 90
+    ) {
       await new Promise((resolve) =>
         setTimeout(resolve, 1000)
       );
 
-      const checkResponse = await fetch(
+      attempts++;
+
+      const statusResponse = await fetch(
         `https://api.replicate.com/v1/predictions/${prediction.id}`,
         {
           headers: {
             Authorization: `Bearer ${replicateToken}`,
           },
+
+          cache: "no-store",
         }
       );
 
-      const checkData = await checkResponse.json();
+      const statusData =
+        await statusResponse.json();
 
-      if (!checkResponse.ok) {
+      if (!statusResponse.ok) {
         console.error(
-          "Replicate polling error:",
-          checkData
+          "Replicate status error:",
+          statusData
         );
 
         return Response.json(
           {
             error:
               "Could not check Erika photo status",
+            details: statusData,
           },
-          { status: 500 }
+          {
+            status: 500,
+          }
         );
       }
 
-      prediction = checkData;
+      prediction = statusData;
+
+      console.log(
+        "ERIKA STATUS:",
+        prediction.id,
+        prediction.status
+      );
     }
 
-    // --------------------------------------------
-    // HANDLE FAILURE
-    // --------------------------------------------
+    // --------------------------------------------------
+    // HANDLE FAILED GENERATION
+    // --------------------------------------------------
 
-    if (prediction.status !== "succeeded") {
+    if (prediction.status === "failed") {
       console.error(
-        "Erika prediction failed:",
+        "ERIKA GENERATION FAILED:",
         prediction
       );
 
@@ -231,21 +242,45 @@ unretouched real-life photography
         {
           error:
             prediction.error ||
-            "Erika photo generation did not succeed",
-
-          predictionId:
-            prediction.id,
-
-          status:
-            prediction.status,
+            "Erika photo generation failed",
+          predictionId: prediction.id,
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
-    // --------------------------------------------
-    // GET REPLICATE IMAGE URL
-    // --------------------------------------------
+    if (prediction.status === "canceled") {
+      return Response.json(
+        {
+          error:
+            "Erika photo generation was canceled",
+          predictionId: prediction.id,
+        },
+        {
+          status: 500,
+        }
+      );
+    }
+
+    if (prediction.status !== "succeeded") {
+      return Response.json(
+        {
+          error:
+            "Erika photo generation timed out",
+          predictionId: prediction.id,
+          status: prediction.status,
+        },
+        {
+          status: 504,
+        }
+      );
+    }
+
+    // --------------------------------------------------
+    // GET IMAGE URL
+    // --------------------------------------------------
 
     const replicateImageUrl =
       Array.isArray(prediction.output)
@@ -256,49 +291,63 @@ unretouched real-life photography
       !replicateImageUrl ||
       typeof replicateImageUrl !== "string"
     ) {
+      console.error(
+        "No image returned:",
+        prediction.output
+      );
+
       return Response.json(
         {
           error:
-            "Replicate returned no Erika image",
+            "Replicate finished but returned no image",
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
-    // --------------------------------------------
-    // DOWNLOAD IMAGE
-    // --------------------------------------------
+    // --------------------------------------------------
+    // DOWNLOAD IMAGE FROM REPLICATE
+    // --------------------------------------------------
 
-    const imageResponse =
-      await fetch(replicateImageUrl);
+    const imageResponse = await fetch(
+      replicateImageUrl
+    );
 
     if (!imageResponse.ok) {
-      const text =
+      const errorText =
         await imageResponse.text();
 
       console.error(
-        "Generated image download error:",
-        text
+        "Image download failed:",
+        errorText
       );
 
       return Response.json(
         {
           error:
-            "Could not download generated Erika photo",
+            "Could not download Erika photo",
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
     const imageBytes =
       await imageResponse.arrayBuffer();
 
-    // --------------------------------------------
-    // SAVE IMAGE TO SUPABASE
-    // --------------------------------------------
+    // --------------------------------------------------
+    // CREATE PERMANENT FILE NAME
+    // --------------------------------------------------
 
     const fileName =
-      `erika-${Date.now()}-${crypto.randomUUID()}.jpg`;
+      `erika-${Date.now()}-${crypto.randomUUID()}.webp`;
+
+    // --------------------------------------------------
+    // UPLOAD IMAGE TO SUPABASE
+    // --------------------------------------------------
 
     const uploadResponse = await fetch(
       `${supabaseUrl}/storage/v1/object/erika-photos/${fileName}`,
@@ -312,7 +361,7 @@ unretouched real-life photography
             `Bearer ${supabaseKey}`,
 
           "Content-Type":
-            "image/jpeg",
+            "image/webp",
 
           "x-upsert":
             "false",
@@ -327,56 +376,62 @@ unretouched real-life photography
         await uploadResponse.text();
 
       console.error(
-        "Supabase upload error:",
+        "Supabase upload failed:",
         uploadError
       );
 
       return Response.json(
         {
           error:
-            "Erika photo generated but could not be saved permanently",
-
-          details:
-            uploadError,
+            "Erika generated the photo, but it could not be saved",
+          details: uploadError,
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
-    // --------------------------------------------
-    // PERMANENT SUPABASE URL
-    // --------------------------------------------
+    // --------------------------------------------------
+    // BUILD PERMANENT URL
+    // --------------------------------------------------
 
     const permanentImageUrl =
       `${supabaseUrl}/storage/v1/object/public/erika-photos/${fileName}`;
+
+    // --------------------------------------------------
+    // RETURN PHOTO TO APP
+    // --------------------------------------------------
 
     return Response.json({
       image: permanentImageUrl,
 
       metadata: {
-        replicate_prediction_id:
-          prediction.id,
+        prediction_id: prediction.id,
 
-        model:
-          ERIKA_MODEL,
+        runner:
+          "black-forest-labs/flux-dev-lora",
 
         trigger:
           ERIKA_TRIGGER,
+
+        lora_scale:
+          1,
+
+        guidance:
+          2.5,
+
+        steps:
+          28,
+
+        aspect_ratio:
+          "4:5",
 
         original_prompt:
           prompt,
 
         final_prompt:
           finalPrompt,
-
-        lora_scale:
-          1.0,
-
-        guidance_scale:
-          2.17,
-
-        steps:
-          28,
 
         storage_file:
           fileName,
@@ -387,7 +442,7 @@ unretouched real-life photography
     });
   } catch (error) {
     console.error(
-      "Photo route error:",
+      "PHOTO ROUTE ERROR:",
       error
     );
 
@@ -396,9 +451,11 @@ unretouched real-life photography
         error:
           error instanceof Error
             ? error.message
-            : "Something went wrong generating the Erika photo",
+            : "Something went wrong generating Erika's photo",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
