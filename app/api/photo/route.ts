@@ -6,7 +6,7 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // =====================================================
-// ERIKA FINAL CHARACTER
+// ERIKA FINAL
 // =====================================================
 
 const ERIKA_TRIGGER = "ERIKAFINAL";
@@ -16,19 +16,15 @@ const ERIKA_LORA_WEIGHTS =
 
 // =====================================================
 // REALISM LORA
-//
-// Second LoRA layered on top of Erika.
-// Start at 0.55 so it improves photographic rendering
-// without overpowering Erika's identity.
 // =====================================================
 
 const REALISM_LORA =
-  "huggingface.co/XLabs-AI/flux-RealismLora/lora.safetensors";
+  "huggingface.co/XLabs-AI/flux-RealismLora";
 
 const REALISM_SCALE = 0.55;
 
 // =====================================================
-// REPLICATE RUNNER
+// REPLICATE MODEL
 // =====================================================
 
 const REPLICATE_RUNNER =
@@ -40,16 +36,16 @@ const REPLICATE_RUNNER =
 
 export async function POST(req: Request) {
   try {
-    // -------------------------------------------------
-    // READ REQUEST
-    // -------------------------------------------------
-
     const body = await req.json();
 
     const prompt =
       typeof body?.prompt === "string"
         ? body.prompt.trim()
         : "";
+
+    // -------------------------------------------------
+    // VALIDATE REQUEST
+    // -------------------------------------------------
 
     if (!prompt) {
       return Response.json(
@@ -61,10 +57,6 @@ export async function POST(req: Request) {
         }
       );
     }
-
-    // -------------------------------------------------
-    // CHECK ENVIRONMENT VARIABLES
-    // -------------------------------------------------
 
     if (!replicateToken) {
       return Response.json(
@@ -90,17 +82,17 @@ export async function POST(req: Request) {
     }
 
     // =================================================
-    // BUILD FINAL PHOTO PROMPT
+    // BUILD PHOTO PROMPT
     //
-    // User instructions remain near the beginning.
-    // The app automatically adds realistic rendering.
+    // User request stays at the front.
+    // Realism language is added automatically.
     // =================================================
 
     const finalPrompt = `
 ${ERIKA_TRIGGER}, ${prompt}
 
 photorealistic real-life photograph,
-realistic smartphone camera rendering,
+realistic smartphone-camera rendering,
 natural skin texture,
 visible subtle pores,
 natural skin tone variation,
@@ -109,7 +101,8 @@ natural individual hair strands,
 realistic flyaway hairs,
 natural hair texture,
 realistic fabric texture,
-realistic fabric folds and compression,
+natural fabric folds,
+realistic fabric compression,
 natural body posture,
 realistic anatomy,
 natural human proportions,
@@ -120,20 +113,21 @@ slight optical lens softness,
 subtle camera sensor noise,
 natural depth of field,
 minor photographic imperfections,
+natural asymmetry,
 unretouched appearance,
 authentic candid photography
 `.trim();
 
-    console.log("========================================");
-    console.log("ERIKAFINAL PHOTO REQUEST");
-    console.log("User prompt:", prompt);
+    console.log("====================================");
+    console.log("ERIKAFINAL PHOTO");
+    console.log("Original prompt:", prompt);
     console.log("Final prompt:", finalPrompt);
-    console.log("Erika LoRA scale: 1.0");
-    console.log("Realism LoRA scale:", REALISM_SCALE);
-    console.log("========================================");
+    console.log("Erika LoRA: 1.0");
+    console.log("Realism LoRA:", REALISM_SCALE);
+    console.log("====================================");
 
     // =================================================
-    // CREATE REPLICATE PREDICTION
+    // START REPLICATE GENERATION
     // =================================================
 
     const predictionResponse = await fetch(
@@ -144,10 +138,6 @@ authentic candid photography
         headers: {
           Authorization: `Bearer ${replicateToken}`,
           "Content-Type": "application/json",
-
-          // If the model is warm, Replicate can return
-          // the result immediately instead of polling.
-          Prefer: "wait=60",
         },
 
         body: JSON.stringify({
@@ -159,7 +149,7 @@ authentic candid photography
             prompt: finalPrompt,
 
             // ------------------------------------------
-            // PRIMARY LORA — ERIKA
+            // ERIKA CHARACTER LORA
             // ------------------------------------------
 
             lora_weights:
@@ -169,7 +159,7 @@ authentic candid photography
               1.0,
 
             // ------------------------------------------
-            // SECONDARY LORA — REALISM
+            // REALISM LORA
             // ------------------------------------------
 
             extra_lora:
@@ -214,7 +204,7 @@ authentic candid photography
       await predictionResponse.json();
 
     // =================================================
-    // HANDLE CREATION ERROR
+    // REPLICATE START ERROR
     // =================================================
 
     if (!predictionResponse.ok) {
@@ -238,13 +228,13 @@ authentic candid photography
     }
 
     console.log(
-      "ERIKAFINAL PREDICTION:",
+      "Prediction created:",
       prediction.id,
       prediction.status
     );
 
     // =================================================
-    // POLL UNTIL COMPLETE
+    // POLL REPLICATE
     // =================================================
 
     let attempts = 0;
@@ -253,7 +243,7 @@ authentic candid photography
       prediction.status !== "succeeded" &&
       prediction.status !== "failed" &&
       prediction.status !== "canceled" &&
-      attempts < 90
+      attempts < 100
     ) {
       await new Promise((resolve) =>
         setTimeout(resolve, 1000)
@@ -299,18 +289,18 @@ authentic candid photography
       prediction = checkData;
 
       console.log(
-        "ERIKAFINAL STATUS:",
+        "ERIKA STATUS:",
         prediction.status
       );
     }
 
     // =================================================
-    // FAILED
+    // GENERATION FAILED
     // =================================================
 
     if (prediction.status === "failed") {
       console.error(
-        "ERIKAFINAL GENERATION FAILED:",
+        "ERIKA GENERATION FAILED:",
         prediction
       );
 
@@ -322,6 +312,9 @@ authentic candid photography
 
           predictionId:
             prediction.id,
+
+          details:
+            prediction,
         },
         {
           status: 500,
@@ -330,7 +323,7 @@ authentic candid photography
     }
 
     // =================================================
-    // CANCELED
+    // GENERATION CANCELED
     // =================================================
 
     if (prediction.status === "canceled") {
@@ -349,7 +342,7 @@ authentic candid photography
     }
 
     // =================================================
-    // TIMEOUT
+    // GENERATION TIMEOUT
     // =================================================
 
     if (prediction.status !== "succeeded") {
@@ -371,7 +364,7 @@ authentic candid photography
     }
 
     // =================================================
-    // GET GENERATED IMAGE
+    // GET OUTPUT IMAGE
     // =================================================
 
     const replicateImageUrl =
@@ -391,7 +384,7 @@ authentic candid photography
       return Response.json(
         {
           error:
-            "Replicate finished but returned no image",
+            "Replicate completed but returned no image",
         },
         {
           status: 500,
@@ -399,8 +392,13 @@ authentic candid photography
       );
     }
 
+    console.log(
+      "Replicate image:",
+      replicateImageUrl
+    );
+
     // =================================================
-    // DOWNLOAD FROM REPLICATE
+    // DOWNLOAD IMAGE FROM REPLICATE
     // =================================================
 
     const imageResponse =
@@ -430,14 +428,14 @@ authentic candid photography
       await imageResponse.arrayBuffer();
 
     // =================================================
-    // CREATE PERMANENT FILE NAME
+    // CREATE FILE NAME
     // =================================================
 
     const fileName =
       `erika-${Date.now()}-${crypto.randomUUID()}.jpg`;
 
     // =================================================
-    // UPLOAD TO SUPABASE
+    // SAVE PERMANENTLY TO SUPABASE
     // =================================================
 
     const uploadResponse = await fetch(
@@ -488,14 +486,14 @@ authentic candid photography
     }
 
     // =================================================
-    // PERMANENT IMAGE URL
+    // PERMANENT SUPABASE IMAGE URL
     // =================================================
 
     const permanentImageUrl =
       `${supabaseUrl}/storage/v1/object/public/erika-photos/${fileName}`;
 
     // =================================================
-    // RETURN PHOTO TO APP
+    // SUCCESS
     // =================================================
 
     return Response.json({
