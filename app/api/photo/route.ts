@@ -6,7 +6,7 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // =====================================================
-// FINAL ERIKA LORA
+// ERIKA FINAL CHARACTER
 // =====================================================
 
 const ERIKA_TRIGGER = "ERIKAFINAL";
@@ -14,13 +14,36 @@ const ERIKA_TRIGGER = "ERIKAFINAL";
 const ERIKA_LORA_WEIGHTS =
   "https://replicate.delivery/xezq/eOU7OpAeaHlwoEavigAhW5vYackREGjOGY3LCyv1MwWcAeiuA/flux-lora.tar";
 
+// =====================================================
+// REALISM LORA
+//
+// Second LoRA layered on top of Erika.
+// Start at 0.55 so it improves photographic rendering
+// without overpowering Erika's identity.
+// =====================================================
+
+const REALISM_LORA =
+  "huggingface.co/XLabs-AI/flux-RealismLora/lora.safetensors";
+
+const REALISM_SCALE = 0.55;
+
+// =====================================================
+// REPLICATE RUNNER
+// =====================================================
+
 const REPLICATE_RUNNER =
   "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions";
 
 // =====================================================
+// PHOTO ROUTE
+// =====================================================
 
 export async function POST(req: Request) {
   try {
+    // -------------------------------------------------
+    // READ REQUEST
+    // -------------------------------------------------
+
     const body = await req.json();
 
     const prompt =
@@ -30,15 +53,27 @@ export async function POST(req: Request) {
 
     if (!prompt) {
       return Response.json(
-        { error: "Prompt is required" },
-        { status: 400 }
+        {
+          error: "Prompt is required",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
+    // -------------------------------------------------
+    // CHECK ENVIRONMENT VARIABLES
+    // -------------------------------------------------
+
     if (!replicateToken) {
       return Response.json(
-        { error: "Missing REPLICATE_API_TOKEN" },
-        { status: 500 }
+        {
+          error: "Missing REPLICATE_API_TOKEN",
+        },
+        {
+          status: 500,
+        }
       );
     }
 
@@ -48,44 +83,58 @@ export async function POST(req: Request) {
           error:
             "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY",
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
-    // =====================================================
-    // AUTOMATIC REALISM PROMPT
+    // =================================================
+    // BUILD FINAL PHOTO PROMPT
     //
-    // The user's visual instructions stay first.
-    // The app adds realism automatically.
-    // =====================================================
+    // User instructions remain near the beginning.
+    // The app automatically adds realistic rendering.
+    // =================================================
 
     const finalPrompt = `
 ${ERIKA_TRIGGER}, ${prompt}
 
 photorealistic real-life photograph,
 realistic smartphone camera rendering,
-natural skin texture and pores,
-subtle natural skin variation,
+natural skin texture,
+visible subtle pores,
+natural skin tone variation,
 realistic facial detail,
-realistic individual hair strands and flyaways,
+natural individual hair strands,
+realistic flyaway hairs,
 natural hair texture,
-realistic fabric texture and folds,
+realistic fabric texture,
+realistic fabric folds and compression,
 natural body posture,
-realistic anatomy and proportions,
+realistic anatomy,
+natural human proportions,
+realistic hands and fingers,
 believable natural lighting,
+realistic shadows,
 slight optical lens softness,
 subtle camera sensor noise,
 natural depth of field,
 minor photographic imperfections,
 unretouched appearance,
-no artificial beauty-filter appearance
+authentic candid photography
 `.trim();
 
-    console.log("ERIKAFINAL PROMPT:", finalPrompt);
+    console.log("========================================");
+    console.log("ERIKAFINAL PHOTO REQUEST");
+    console.log("User prompt:", prompt);
+    console.log("Final prompt:", finalPrompt);
+    console.log("Erika LoRA scale: 1.0");
+    console.log("Realism LoRA scale:", REALISM_SCALE);
+    console.log("========================================");
 
-    // =====================================================
-    // RUN ERIKA THROUGH FLUX DEV LORA
-    // =====================================================
+    // =================================================
+    // CREATE REPLICATE PREDICTION
+    // =================================================
 
     const predictionResponse = await fetch(
       REPLICATE_RUNNER,
@@ -95,34 +144,67 @@ no artificial beauty-filter appearance
         headers: {
           Authorization: `Bearer ${replicateToken}`,
           "Content-Type": "application/json",
+
+          // If the model is warm, Replicate can return
+          // the result immediately instead of polling.
           Prefer: "wait=60",
         },
 
         body: JSON.stringify({
           input: {
+            // ------------------------------------------
+            // PROMPT
+            // ------------------------------------------
+
             prompt: finalPrompt,
 
-            lora_weights: ERIKA_LORA_WEIGHTS,
+            // ------------------------------------------
+            // PRIMARY LORA — ERIKA
+            // ------------------------------------------
 
-            // Identity strength
-            lora_scale: 1.0,
+            lora_weights:
+              ERIKA_LORA_WEIGHTS,
 
-            // Good starting point for realism
-            guidance: 2.2,
+            lora_scale:
+              1.0,
 
-            num_inference_steps: 28,
+            // ------------------------------------------
+            // SECONDARY LORA — REALISM
+            // ------------------------------------------
 
-            aspect_ratio: "4:5",
+            extra_lora:
+              REALISM_LORA,
 
-            num_outputs: 1,
+            extra_lora_scale:
+              REALISM_SCALE,
 
-            go_fast: false,
+            // ------------------------------------------
+            // GENERATION SETTINGS
+            // ------------------------------------------
 
-            megapixels: "1",
+            guidance:
+              2.2,
 
-            output_format: "jpg",
+            num_inference_steps:
+              28,
 
-            output_quality: 95,
+            aspect_ratio:
+              "4:5",
+
+            num_outputs:
+              1,
+
+            go_fast:
+              false,
+
+            megapixels:
+              "1",
+
+            output_format:
+              "jpg",
+
+            output_quality:
+              95,
           },
         }),
       }
@@ -130,6 +212,10 @@ no artificial beauty-filter appearance
 
     let prediction =
       await predictionResponse.json();
+
+    // =================================================
+    // HANDLE CREATION ERROR
+    // =================================================
 
     if (!predictionResponse.ok) {
       console.error(
@@ -141,9 +227,13 @@ no artificial beauty-filter appearance
         {
           error:
             "Could not start Erika photo generation",
-          details: prediction,
+
+          details:
+            prediction,
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
@@ -153,9 +243,9 @@ no artificial beauty-filter appearance
       prediction.status
     );
 
-    // =====================================================
-    // POLL IF IT DID NOT FINISH IMMEDIATELY
-    // =====================================================
+    // =================================================
+    // POLL UNTIL COMPLETE
+    // =================================================
 
     let attempts = 0;
 
@@ -175,13 +265,16 @@ no artificial beauty-filter appearance
         `https://api.replicate.com/v1/predictions/${prediction.id}`,
         {
           headers: {
-            Authorization: `Bearer ${replicateToken}`,
+            Authorization:
+              `Bearer ${replicateToken}`,
           },
+
           cache: "no-store",
         }
       );
 
-      const checkData = await checkResponse.json();
+      const checkData =
+        await checkResponse.json();
 
       if (!checkResponse.ok) {
         console.error(
@@ -193,9 +286,13 @@ no artificial beauty-filter appearance
           {
             error:
               "Could not check Erika photo status",
-            details: checkData,
+
+            details:
+              checkData,
           },
-          { status: 500 }
+          {
+            status: 500,
+          }
         );
       }
 
@@ -207,13 +304,13 @@ no artificial beauty-filter appearance
       );
     }
 
-    // =====================================================
-    // HANDLE FAILURES
-    // =====================================================
+    // =================================================
+    // FAILED
+    // =================================================
 
     if (prediction.status === "failed") {
       console.error(
-        "ERIKAFINAL FAILED:",
+        "ERIKAFINAL GENERATION FAILED:",
         prediction
       );
 
@@ -222,37 +319,60 @@ no artificial beauty-filter appearance
           error:
             prediction.error ||
             "Erika photo generation failed",
-          predictionId: prediction.id,
+
+          predictionId:
+            prediction.id,
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
+
+    // =================================================
+    // CANCELED
+    // =================================================
 
     if (prediction.status === "canceled") {
       return Response.json(
         {
           error:
             "Erika photo generation was canceled",
+
+          predictionId:
+            prediction.id,
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
+
+    // =================================================
+    // TIMEOUT
+    // =================================================
 
     if (prediction.status !== "succeeded") {
       return Response.json(
         {
           error:
             "Erika photo generation timed out",
-          predictionId: prediction.id,
-          status: prediction.status,
+
+          predictionId:
+            prediction.id,
+
+          status:
+            prediction.status,
         },
-        { status: 504 }
+        {
+          status: 504,
+        }
       );
     }
 
-    // =====================================================
-    // GET IMAGE
-    // =====================================================
+    // =================================================
+    // GET GENERATED IMAGE
+    // =================================================
 
     const replicateImageUrl =
       Array.isArray(prediction.output)
@@ -263,42 +383,62 @@ no artificial beauty-filter appearance
       !replicateImageUrl ||
       typeof replicateImageUrl !== "string"
     ) {
+      console.error(
+        "NO IMAGE RETURNED:",
+        prediction.output
+      );
+
       return Response.json(
         {
           error:
             "Replicate finished but returned no image",
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
-    // =====================================================
-    // DOWNLOAD IMAGE
-    // =====================================================
+    // =================================================
+    // DOWNLOAD FROM REPLICATE
+    // =================================================
 
-    const imageResponse = await fetch(
-      replicateImageUrl
-    );
+    const imageResponse =
+      await fetch(replicateImageUrl);
 
     if (!imageResponse.ok) {
+      const imageError =
+        await imageResponse.text();
+
+      console.error(
+        "IMAGE DOWNLOAD ERROR:",
+        imageError
+      );
+
       return Response.json(
         {
           error:
             "Could not download generated Erika photo",
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
     const imageBytes =
       await imageResponse.arrayBuffer();
 
-    // =====================================================
-    // SAVE PERMANENTLY TO SUPABASE
-    // =====================================================
+    // =================================================
+    // CREATE PERMANENT FILE NAME
+    // =================================================
 
     const fileName =
       `erika-${Date.now()}-${crypto.randomUUID()}.jpg`;
+
+    // =================================================
+    // UPLOAD TO SUPABASE
+    // =================================================
 
     const uploadResponse = await fetch(
       `${supabaseUrl}/storage/v1/object/erika-photos/${fileName}`,
@@ -306,7 +446,8 @@ no artificial beauty-filter appearance
         method: "POST",
 
         headers: {
-          apikey: supabaseKey,
+          apikey:
+            supabaseKey,
 
           Authorization:
             `Bearer ${supabaseKey}`,
@@ -318,7 +459,8 @@ no artificial beauty-filter appearance
             "false",
         },
 
-        body: imageBytes,
+        body:
+          imageBytes,
       }
     );
 
@@ -334,46 +476,77 @@ no artificial beauty-filter appearance
       return Response.json(
         {
           error:
-            "Photo generated but could not be saved",
-          details: uploadError,
+            "Erika generated the photo, but it could not be saved",
+
+          details:
+            uploadError,
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
-    // =====================================================
-    // PERMANENT PHOTO URL
-    // =====================================================
+    // =================================================
+    // PERMANENT IMAGE URL
+    // =================================================
 
     const permanentImageUrl =
       `${supabaseUrl}/storage/v1/object/public/erika-photos/${fileName}`;
 
+    // =================================================
+    // RETURN PHOTO TO APP
+    // =================================================
+
     return Response.json({
-      image: permanentImageUrl,
+      image:
+        permanentImageUrl,
 
       metadata: {
-        prediction_id: prediction.id,
+        prediction_id:
+          prediction.id,
 
-        character: "ERIKAFINAL",
+        character:
+          "ERIKAFINAL",
 
-        trigger: ERIKA_TRIGGER,
+        trigger:
+          ERIKA_TRIGGER,
 
         runner:
           "black-forest-labs/flux-dev-lora",
 
-        lora_scale: 1.0,
+        erika_lora:
+          ERIKA_LORA_WEIGHTS,
 
-        guidance: 2.2,
+        erika_lora_scale:
+          1.0,
 
-        steps: 28,
+        realism_lora:
+          REALISM_LORA,
 
-        aspect_ratio: "4:5",
+        realism_lora_scale:
+          REALISM_SCALE,
 
-        original_prompt: prompt,
+        guidance:
+          2.2,
 
-        final_prompt: finalPrompt,
+        steps:
+          28,
 
-        permanent: true,
+        aspect_ratio:
+          "4:5",
+
+        original_prompt:
+          prompt,
+
+        final_prompt:
+          finalPrompt,
+
+        storage_file:
+          fileName,
+
+        permanent:
+          true,
       },
     });
   } catch (error) {
@@ -389,7 +562,9 @@ no artificial beauty-filter appearance
             ? error.message
             : "Something went wrong generating Erika's photo",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
