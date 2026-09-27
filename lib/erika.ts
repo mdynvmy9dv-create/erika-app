@@ -109,7 +109,7 @@ export function photoSettings(slots: PhotoSlots) {
       guidance: 2.2,
       aspect_ratio: "3:4",
       num_outputs: 1,
-      prompt_strength: 0.72,
+      prompt_strength: 0.85,
     };
   }
 
@@ -119,6 +119,6 @@ export function photoSettings(slots: PhotoSlots) {
     guidance: 2.3,
     aspect_ratio: "4:5",
     num_outputs: 1,
-    prompt_strength: 0.55,
+    prompt_strength: 0.78,
   };
 }
