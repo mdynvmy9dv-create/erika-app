@@ -1,247 +1,209 @@
 export const runtime = "nodejs";
-export const maxDuration = 120;
 
-import {
-  compilePhotoPrompt,
-  photoSettings,
-  slotsFromUserText,
-  type PhotoSlots,
-} from "@/lib/erika";
+import { compilePhotoPrompt, slotsFromUserText } from "../../../lib/erika";
 
-const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const openaiKey = process.env.OPENAI_API_KEY;
 
-const BUCKET = "erika-photos";
+type ChatMessage = {
+  role?: string;
+  content?: string;
+  text?: string;
+};
 
-const ERIKA_LORA =
-  "https://replicate.delivery/xezq/eOU7OpAeaHlwoEavigAhW5vYackREGjOGY3LCyv1MwWcAeiuA/flux-lora.tar";
+function extractOutputText(data: any): string {
+  if (typeof data?.output_text === "string" && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
 
-const REALISM_LORA =
-  "https://huggingface.co/XLabs-AI/flux-RealismLora/resolve/main/lora.safetensors";
+  const pieces: string[] = [];
 
-const MODEL_URL =
-  "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions";
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getRandomSeed() {
-  return Math.floor(Math.random() * 1_000_000_000);
-}
-
-async function waitForPrediction(prediction: any) {
-  let current = prediction;
-  let attempts = 0;
-
-  while (
-    current.status !== "succeeded" &&
-    current.status !== "failed" &&
-    current.status !== "canceled" &&
-    attempts < 110
-  ) {
-    await sleep(1000);
-    attempts++;
-
-    const response = await fetch(
-      `https://api.replicate.com/v1/predictions/${current.id}`,
-      {
-        headers: {
-          Authorization: `Bearer ${REPLICATE_API_TOKEN}`,
-        },
-        cache: "no-store",
+  if (Array.isArray(data?.output)) {
+    for (const item of data.output) {
+      if (!Array.isArray(item?.content)) continue;
+      for (const content of item.content) {
+        if (typeof content?.text === "string" && content.text.trim()) {
+          pieces.push(content.text);
+        }
       }
+    }
+  }
+
+  return pieces.join("\n").trim();
+}
+
+function cleanJson(text: string) {
+  return text
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+function getUserText(body: any): string {
+  if (typeof body?.message === "string" && body.message.trim()) {
+    return body.message.trim();
+  }
+
+  if (typeof body?.text === "string" && body.text.trim()) {
+    return body.text.trim();
+  }
+
+  if (Array.isArray(body?.messages)) {
+    const userMessages = body.messages.filter(
+      (m: ChatMessage) => m?.role === "user"
     );
+    const last = userMessages[userMessages.length - 1];
+
+    if (last) {
+      if (typeof last.content === "string" && last.content.trim()) {
+        return last.content.trim();
+      }
+      if (typeof last.text === "string" && last.text.trim()) {
+        return last.text.trim();
+      }
+    }
+  }
+
+  return "";
+}
+
+function getConversationContext(body: any): string {
+  if (!Array.isArray(body?.messages)) return "";
+
+  return body.messages
+    .slice(-20)
+    .map((m: ChatMessage) => {
+      const role = m?.role === "assistant" ? "Erika" : "User";
+      const text =
+        typeof m?.content === "string"
+          ? m.content
+          : typeof m?.text === "string"
+          ? m.text
+          : "";
+      return text ? `${role}: ${text}` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function looksLikePhotoRequest(text: string) {
+  return /(photo|pic|picture|selfie|send me|show me|let me see|wearing|nude|naked)/i.test(
+    text
+  );
+}
+
+export async function POST(req: Request) {
+  try {
+    if (!openaiKey) {
+      return Response.json({ error: "Missing OPENAI_API_KEY" }, { status: 500 });
+    }
+
+    const body = await req.json();
+    const userText = getUserText(body);
+
+    if (!userText) {
+      return Response.json({ error: "Message is required" }, { status: 400 });
+    }
+
+    const conversationContext = getConversationContext(body);
+    const photoRequested = looksLikePhotoRequest(userText);
+
+    const instructions = `
+You are Erika, an adult fictional female companion.
+
+Talk short, warm, and human. Never sound like an assistant.
+
+If the user is asking for a photo, selfie, picture, or to see you, reply with JSON:
+
+{"type":"photo","message":"short reply"}
+
+If they are just talking, reply with JSON:
+
+{"type":"text","message":"short reply"}
+
+Do not write an image prompt.
+Do not describe clothing, camera, or photography details.
+Return JSON only.
+`.trim();
+
+    const input = `
+RECENT CONVERSATION:
+${conversationContext || "(none)"}
+
+LATEST USER MESSAGE:
+${userText}
+
+Decide if this is a photo request. Return JSON only.
+`.trim();
+
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${openaiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.6-luna",
+        instructions,
+        input,
+        max_output_tokens: 200,
+      }),
+    });
 
     const data = await response.json();
 
     if (!response.ok) {
-      console.error("POLL ERROR:", data);
-      throw new Error("Could not check photo generation status");
-    }
-
-    current = data;
-    console.log("PHOTO STATUS:", current.status);
-  }
-
-  return current;
-}
-
-async function generateErikaPhoto(prompt: string, slots: PhotoSlots) {
-  const settings = photoSettings(slots);
-  const finalPrompt = compilePhotoPrompt(slots);
-
-  console.log("USING ERIKA LORA BACKEND");
-  console.log("SLOTS:", slots);
-  console.log("FINAL PROMPT:", finalPrompt);
-  console.log("SETTINGS:", settings);
-
-  const response = await fetch(MODEL_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${REPLICATE_API_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      input: {
-        prompt: finalPrompt,
-        lora_weights: ERIKA_LORA,
-        extra_lora: REALISM_LORA,
-        ...settings,
-        num_inference_steps: 32,
-        go_fast: false,
-        megapixels: "1",
-        output_format: "jpg",
-        output_quality: 95,
-        seed: getRandomSeed(),
-        disable_safety_checker: true,
-      },
-    }),
-  });
-
-  const prediction = await response.json();
-
-  if (!response.ok) {
-    console.error("MODEL START ERROR:", prediction);
-    throw new Error(
-      prediction?.detail ||
-        prediction?.error ||
-        "Could not start photo generation"
-    );
-  }
-
-  console.log("PREDICTION ID:", prediction.id);
-
-  const result = await waitForPrediction(prediction);
-
-  if (result.status !== "succeeded") {
-    console.error("GENERATION FAILED:", result);
-    throw new Error(result.error || "Photo generation failed");
-  }
-
-  const output = Array.isArray(result.output) ? result.output[0] : result.output;
-
-  if (!output || typeof output !== "string") {
-    throw new Error("Model returned no image URL");
-  }
-
-  return output;
-}
-
-async function saveImage(sourceUrl: string) {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Missing Supabase environment variables");
-  }
-
-  const imageResponse = await fetch(sourceUrl);
-  if (!imageResponse.ok) {
-    throw new Error("Could not download generated image");
-  }
-
-  const imageBytes = await imageResponse.arrayBuffer();
-  const contentType = imageResponse.headers.get("content-type") || "image/jpeg";
-
-  let extension = "jpg";
-  if (contentType.includes("png")) extension = "png";
-  if (contentType.includes("webp")) extension = "webp";
-
-  const fileName = `erika-${Date.now()}-${crypto.randomUUID()}.${extension}`;
-
-  const response = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${fileName}`,
-    {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        "Content-Type": contentType,
-        "x-upsert": "false",
-      },
-      body: imageBytes,
-    }
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error("SUPABASE UPLOAD ERROR:", errorText);
-    throw new Error("Generated photo could not be saved to storage");
-  }
-
-  return {
-    fileName,
-    publicUrl: `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${fileName}`,
-  };
-}
-
-export async function POST(request: Request) {
-  try {
-    if (!REPLICATE_API_TOKEN) {
+      console.error("OPENAI CHAT ERROR:", data);
       return Response.json(
-        { error: "Missing REPLICATE_API_TOKEN" },
+        { error: "Erika could not respond", details: data },
         { status: 500 }
       );
     }
 
-    const rawBody = await request.text();
-    console.log("RAW BODY RECEIVED:", rawBody);
+    const outputText = extractOutputText(data);
 
-    let body: any = {};
+    let parsed: any = null;
     try {
-      body = rawBody ? JSON.parse(rawBody) : {};
-    } catch (err) {
-      console.error("Failed to parse body:", err);
-      body = {};
+      parsed = JSON.parse(cleanJson(outputText || "{}"));
+    } catch {
+      parsed = { type: "text", message: outputText || "Hey." };
     }
 
-    const rawPrompt =
-      body?.prompt ??
-      body?.photo_prompt ??
-      body?.photoPrompt ??
-      body?.message ??
-      body?.text ??
-      "";
+    const isPhoto = parsed?.type === "photo" || photoRequested;
 
-    const prompt = typeof rawPrompt === "string" ? rawPrompt.trim() : "";
+    if (isPhoto) {
+      const slots = slotsFromUserText(userText);
+      const photoPrompt = compilePhotoPrompt(slots);
 
-    if (!prompt) {
-      return Response.json(
-        {
-          error: "No photo prompt received",
-          debug: { rawBody, parsedBody: body },
-        },
-        { status: 400 }
-      );
+      console.log("PHOTO SLOTS:", slots);
+      console.log("COMPILED PHOTO PROMPT:", photoPrompt);
+
+      return Response.json({
+        type: "photo",
+        message:
+          typeof parsed?.message === "string" && parsed.message.trim()
+            ? parsed.message.trim()
+            : "Here you go 😉",
+        photo_prompt: photoPrompt,
+        slots,
+      });
     }
-
-    const slots: PhotoSlots =
-      body?.slots && typeof body.slots === "object"
-        ? body.slots
-        : slotsFromUserText(prompt);
-
-    const imageUrl = await generateErikaPhoto(prompt, slots);
-    const stored = await saveImage(imageUrl);
 
     return Response.json({
-      type: "photo",
-      image: stored.publicUrl,
-      imageUrl: stored.publicUrl,
-      metadata: {
-        backend: "erikafinal",
-        originalPrompt: prompt,
-        slots,
-        storageFile: stored.fileName,
-      },
+      type: "text",
+      message:
+        typeof parsed?.message === "string" && parsed.message.trim()
+          ? parsed.message.trim()
+          : outputText || "Hey.",
     });
   } catch (error) {
-    console.error("PHOTO ROUTE ERROR:", error);
-
+    console.error("CHAT ROUTE ERROR:", error);
     return Response.json(
       {
         error:
           error instanceof Error
             ? error.message
-            : "Unknown photo generation error",
+            : "Something went wrong talking to Erika",
       },
       { status: 500 }
     );
