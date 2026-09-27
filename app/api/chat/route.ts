@@ -24,10 +24,7 @@ type ErikaResponse =
 // --------------------------------------------------
 
 function extractOutputText(data: any): string {
-  if (
-    typeof data?.output_text === "string" &&
-    data.output_text.trim()
-  ) {
+  if (typeof data?.output_text === "string" && data.output_text.trim()) {
     return data.output_text.trim();
   }
 
@@ -38,10 +35,7 @@ function extractOutputText(data: any): string {
       if (!Array.isArray(item?.content)) continue;
 
       for (const content of item.content) {
-        if (
-          typeof content?.text === "string" &&
-          content.text.trim()
-        ) {
+        if (typeof content?.text === "string" && content.text.trim()) {
           pieces.push(content.text);
         }
       }
@@ -65,21 +59,14 @@ function cleanJson(text: string): string {
 
 // --------------------------------------------------
 // Find user's latest message
-// Supports several possible frontend payload shapes
 // --------------------------------------------------
 
 function getUserText(body: any): string {
-  if (
-    typeof body?.message === "string" &&
-    body.message.trim()
-  ) {
+  if (typeof body?.message === "string" && body.message.trim()) {
     return body.message.trim();
   }
 
-  if (
-    typeof body?.text === "string" &&
-    body.text.trim()
-  ) {
+  if (typeof body?.text === "string" && body.text.trim()) {
     return body.text.trim();
   }
 
@@ -88,21 +75,13 @@ function getUserText(body: any): string {
       (m: ChatMessage) => m?.role === "user"
     );
 
-    const last =
-      userMessages[userMessages.length - 1];
+    const last = userMessages[userMessages.length - 1];
 
     if (last) {
-      if (
-        typeof last.content === "string" &&
-        last.content.trim()
-      ) {
+      if (typeof last.content === "string" && last.content.trim()) {
         return last.content.trim();
       }
-
-      if (
-        typeof last.text === "string" &&
-        last.text.trim()
-      ) {
+      if (typeof last.text === "string" && last.text.trim()) {
         return last.text.trim();
       }
     }
@@ -112,32 +91,23 @@ function getUserText(body: any): string {
 }
 
 // --------------------------------------------------
-// Build recent conversation text if frontend supplies it
+// Build recent conversation text
 // --------------------------------------------------
 
 function getConversationContext(body: any): string {
-  if (!Array.isArray(body?.messages)) {
-    return "";
-  }
+  if (!Array.isArray(body?.messages)) return "";
 
   return body.messages
     .slice(-20)
     .map((m: ChatMessage) => {
-      const role =
-        m?.role === "assistant"
-          ? "Erika"
-          : "User";
-
+      const role = m?.role === "assistant" ? "Erika" : "User";
       const text =
         typeof m?.content === "string"
           ? m.content
           : typeof m?.text === "string"
           ? m.text
           : "";
-
-      return text
-        ? `${role}: ${text}`
-        : "";
+      return text ? `${role}: ${text}` : "";
     })
     .filter(Boolean)
     .join("\n");
@@ -148,33 +118,17 @@ function getConversationContext(body: any): string {
 export async function POST(req: Request) {
   try {
     if (!openaiKey) {
-      return Response.json(
-        {
-          error: "Missing OPENAI_API_KEY",
-        },
-        {
-          status: 500,
-        }
-      );
+      return Response.json({ error: "Missing OPENAI_API_KEY" }, { status: 500 });
     }
 
     const body = await req.json();
-
     const userText = getUserText(body);
 
     if (!userText) {
-      return Response.json(
-        {
-          error: "Message is required",
-        },
-        {
-          status: 400,
-        }
-      );
+      return Response.json({ error: "Message is required" }, { status: 400 });
     }
 
-    const conversationContext =
-      getConversationContext(body);
+    const conversationContext = getConversationContext(body);
 
     // --------------------------------------------------
     // ERIKA INSTRUCTIONS
@@ -183,68 +137,37 @@ export async function POST(req: Request) {
     const instructions = `
 You are Erika, an adult fictional female AI companion.
 
-Your job is to talk naturally and conversationally.
+Talk naturally, warmly, and casually. Keep replies concise and human.
+Do not sound like an assistant.
 
-Keep responses concise, warm, casual, and human.
-Do not sound like an assistant or narrate what you are doing.
-
-IMPORTANT PHOTO BEHAVIOR:
-
-When the user asks for a photo, selfie, picture, image,
-or asks to see what Erika looks like, respond with JSON:
+When the user asks for a photo, selfie, picture, or to see you, always respond with this JSON format:
 
 {
   "type": "photo",
-  "message": "short natural response from Erika",
+  "message": "short natural response",
   "photo_prompt": "detailed image description"
 }
 
-For normal conversation respond with:
+For normal conversation use:
 
 {
   "type": "text",
   "message": "Erika's response"
 }
 
-PHOTO PROMPT RULES (VERY IMPORTANT):
+PHOTO PROMPT RULES (CRITICAL):
 
-- The user's requested visual details are mandatory and must be followed exactly.
-- Never add words like "tasteful", "modest", "fully covered", "appropriate", "classy", or any similar softening language.
-- Never automatically cover intimate areas or make clothing more conservative than what the user asked for.
-- Do not change, weaken, or sanitize the user's request for clothing, pose, angle, or expression.
-- If the user asks for something revealing, intimate, or sexy, keep that intent fully in the photo_prompt.
-- You may add realistic photography details, but they must never contradict or soften what the user actually requested.
+- Always start the photo_prompt with: "ERIKAFINAL, exact same woman as always, same face, same body, same long dark wavy hair"
+- Strongly follow the user's request.
+- If the user says things like "something sexy", "send nudes", "show me your body", "pic of your ass", "topless", etc., create a matching revealing or nude image.
+- Do not add words like "tasteful", "modest", "fully covered", "classy", or "appropriate".
+- Do not randomly make the image more covered than what the user asked for.
+- Keep clothing, nudity level, pose, and camera angle as close as possible to the request.
+- Erika has long dark wavy hair and a consistent recognizable face and body.
 
-Preserve exactly:
+Aim for photorealistic real-life photography with natural skin texture, visible pores, realistic hair, natural lighting, and slight lens softness.
 
-- front view / rear view / side view / three-quarter view
-- full body / head-to-toe
-- clothing type, coverage, and how it sits on the body
-- pose and body orientation
-- facial expression
-
-If the user requests "side view", describe a strict 90-degree side profile.
-If the user requests "back view" or "rear view", describe a dead-straight rear view.
-If the user requests "front view", describe a dead-straight front view.
-If the user requests "full body", make sure the entire body is visible.
-
-Erika has long dark wavy hair.
-
-PHOTO PROMPTS SHOULD AIM FOR:
-
-photorealistic photography,
-natural skin texture,
-subtle pores and skin variation,
-realistic hair strands and flyaways,
-natural facial detail,
-realistic fabric texture,
-natural posture,
-believable lighting,
-slight lens softness,
-subtle photographic sensor texture.
-
-Return JSON only.
-Do not wrap JSON in markdown.
+Return JSON only. Do not wrap it in markdown.
 `.trim();
 
     // --------------------------------------------------
@@ -253,77 +176,49 @@ Do not wrap JSON in markdown.
 
     const input = `
 RECENT CONVERSATION:
-${conversationContext || "(No additional context provided.)"}
+${conversationContext || "(No additional context)"}
 
 LATEST USER MESSAGE:
 ${userText}
 
-Respond as Erika.
-
-If this is a photo request, preserve every visual instruction
-from the LATEST USER MESSAGE.
+Respond as Erika. If this is a photo request, create a photo_prompt that closely matches what the user asked for.
 `.trim();
 
     // --------------------------------------------------
     // CALL OPENAI
     // --------------------------------------------------
 
-    const response = await fetch(
-      "https://api.openai.com/v1/responses",
-      {
-        method: "POST",
-
-        headers: {
-          Authorization: `Bearer ${openaiKey}`,
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          model: "gpt-5.6-luna",
-          instructions,
-          input,
-          max_output_tokens: 600,
-        }),
-      }
-    );
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${openaiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.6-luna",
+        instructions,
+        input,
+        max_output_tokens: 700,
+      }),
+    });
 
     const data = await response.json();
 
     if (!response.ok) {
-      console.error(
-        "OPENAI CHAT ERROR:",
-        data
-      );
-
+      console.error("OPENAI CHAT ERROR:", data);
       return Response.json(
-        {
-          error:
-            "Erika could not respond",
-          details: data,
-        },
-        {
-          status: 500,
-        }
+        { error: "Erika could not respond", details: data },
+        { status: 500 }
       );
     }
 
-    const outputText =
-      extractOutputText(data);
+    const outputText = extractOutputText(data);
 
     if (!outputText) {
-      console.error(
-        "EMPTY OPENAI RESPONSE:",
-        data
-      );
-
+      console.error("EMPTY OPENAI RESPONSE:", data);
       return Response.json(
-        {
-          error:
-            "Erika returned an empty response",
-        },
-        {
-          status: 500,
-        }
+        { error: "Erika returned an empty response" },
+        { status: 500 }
       );
     }
 
@@ -334,11 +229,8 @@ from the LATEST USER MESSAGE.
     let parsed: ErikaResponse;
 
     try {
-      parsed = JSON.parse(
-        cleanJson(outputText)
-      );
+      parsed = JSON.parse(cleanJson(outputText));
     } catch {
-      // Never break normal chat if JSON formatting slips.
       return Response.json({
         type: "text",
         message: outputText,
@@ -349,56 +241,26 @@ from the LATEST USER MESSAGE.
     // PHOTO REQUEST
     // --------------------------------------------------
 
-    if (
-      parsed.type === "photo" &&
-      typeof parsed.photo_prompt === "string"
-    ) {
-      /*
-        CRITICAL FIX:
-
-        The AI can expand the request, but the user's ORIGINAL
-        instructions are appended afterward as mandatory image
-        instructions.
-
-        This prevents:
-        "side view" becoming front-facing,
-        "full body" becoming waist-up,
-        clothing details disappearing, etc.
-      */
-
+    if (parsed.type === "photo" && typeof parsed.photo_prompt === "string") {
       const preservedPhotoPrompt = `
 ${parsed.photo_prompt.trim()}
 
 MANDATORY USER VISUAL INSTRUCTIONS:
 ${userText}
 
-The mandatory user visual instructions above take priority over
-any conflicting camera angle, orientation, framing, pose,
-clothing, garment construction, color, material, setting,
-or expression elsewhere in this prompt.
+The mandatory user visual instructions above take priority over any conflicting details in the prompt above.
 `.trim();
 
-      console.log(
-        "PHOTO REQUEST ORIGINAL:",
-        userText
-      );
-
-      console.log(
-        "PHOTO PROMPT PRESERVED:",
-        preservedPhotoPrompt
-      );
+      console.log("PHOTO REQUEST ORIGINAL:", userText);
+      console.log("PHOTO PROMPT PRESERVED:", preservedPhotoPrompt);
 
       return Response.json({
         type: "photo",
-
         message:
-          typeof parsed.message === "string" &&
-          parsed.message.trim()
+          typeof parsed.message === "string" && parsed.message.trim()
             ? parsed.message.trim()
-            : "Sure 😉",
-
-        photo_prompt:
-          preservedPhotoPrompt,
+            : "Here you go 😉",
+        photo_prompt: preservedPhotoPrompt,
       });
     }
 
@@ -408,19 +270,13 @@ or expression elsewhere in this prompt.
 
     return Response.json({
       type: "text",
-
       message:
-        typeof parsed.message === "string" &&
-        parsed.message.trim()
+        typeof parsed.message === "string" && parsed.message.trim()
           ? parsed.message.trim()
           : outputText,
     });
   } catch (error) {
-    console.error(
-      "CHAT ROUTE ERROR:",
-      error
-    );
-
+    console.error("CHAT ROUTE ERROR:", error);
     return Response.json(
       {
         error:
@@ -428,9 +284,7 @@ or expression elsewhere in this prompt.
             ? error.message
             : "Something went wrong talking to Erika",
       },
-      {
-        status: 500,
-      }
+      { status: 500 }
     );
   }
 }
