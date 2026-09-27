@@ -217,6 +217,8 @@ export default function Home() {
 
       const chatData = await chatResponse.json();
 
+      console.log("CHAT RESPONSE:", chatData);
+
       if (!chatResponse.ok) {
         throw new Error(
           chatData.error || "Chat request failed"
@@ -268,21 +270,44 @@ export default function Home() {
 
         setActivity("photo");
 
+        // IMPORTANT FIX:
+        // Supports both naming styles from the chat route.
+        // If neither exists, use the user's exact request.
+        const photoPrompt =
+          (
+            chatData.photo_prompt ??
+            chatData.photoPrompt ??
+            cleaned
+          )
+            ?.toString()
+            .trim() || cleaned;
+
+        console.log(
+          "SENDING PHOTO PROMPT:",
+          photoPrompt
+        );
+
         const photoResponse = await fetch("/api/photo", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            prompt: chatData.photoPrompt,
+            prompt: photoPrompt,
           }),
         });
 
         const photoData = await photoResponse.json();
 
+        console.log("PHOTO RESPONSE:", photoData);
+
+        const returnedImage =
+          photoData.image ??
+          photoData.imageUrl;
+
         if (
           !photoResponse.ok ||
-          !photoData.image
+          !returnedImage
         ) {
           throw new Error(
             photoData.error ||
@@ -293,7 +318,7 @@ export default function Home() {
         const imageMessage: Message = {
           role: "assistant",
           type: "image",
-          image: photoData.image,
+          image: returnedImage,
           source: "photo",
         };
 
@@ -305,7 +330,7 @@ export default function Home() {
         await saveMessage(
           imageMessage,
           photoData.metadata || {
-            prompt: chatData.photoPrompt,
+            prompt: photoPrompt,
           }
         );
 
@@ -500,9 +525,6 @@ export default function Home() {
 
       // -------------------------
       // IPHONE MICROPHONE
-      //
-      // These settings reduce Erika hearing
-      // herself through the speaker.
       // -------------------------
 
       const micStream =
@@ -685,7 +707,6 @@ export default function Home() {
   if (voiceActive || voiceConnecting) {
     return (
       <main className="min-h-[100dvh] bg-black text-white flex flex-col items-center justify-between px-6 py-14">
-
         <div className="text-center">
           <p className="text-sm text-white/50">
             Erika
