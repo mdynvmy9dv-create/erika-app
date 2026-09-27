@@ -1,10 +1,6 @@
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-// =====================================================
-// ENVIRONMENT
-// =====================================================
-
 const REPLICATE_API_TOKEN =
   process.env.REPLICATE_API_TOKEN;
 
@@ -14,15 +10,11 @@ const SUPABASE_URL =
 const SUPABASE_SERVICE_ROLE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// =====================================================
-// STORAGE
-// =====================================================
-
 const BUCKET = "erika-photos";
 const REFERENCE_FOLDER = "references";
 
 // =====================================================
-// ERIKA FINAL LORA
+// ERIKA FINAL
 // =====================================================
 
 const ERIKA_TRIGGER = "ERIKAFINAL";
@@ -30,22 +22,16 @@ const ERIKA_TRIGGER = "ERIKAFINAL";
 const ERIKA_LORA =
   "https://replicate.delivery/xezq/eOU7OpAeaHlwoEavigAhW5vYackREGjOGY3LCyv1MwWcAeiuA/flux-lora.tar";
 
-// =====================================================
-// REALISM LORA
-// =====================================================
-
 const REALISM_LORA =
   "https://huggingface.co/XLabs-AI/flux-RealismLora/resolve/main/lora.safetensors";
 
-// =====================================================
-// MODELS
-// =====================================================
-
+// Normal Erika backend
 const NORMAL_MODEL_URL =
   "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions";
 
-const REFERENCE_MODEL_URL =
-  "https://api.replicate.com/v1/models/nsfw-api/realvis-hyper-lora/predictions";
+// Adult/reference backend version
+const REFERENCE_VERSION =
+  "d9aab9a980d2368bc9d4b9537267ff55fad72c74d4d405de936101c18e45ecfc";
 
 // =====================================================
 
@@ -56,10 +42,12 @@ function sleep(ms: number) {
 }
 
 // =====================================================
-// CHOOSE BACKEND
+// ROUTING
 // =====================================================
 
-function shouldUseReferenceBackend(prompt: string) {
+function shouldUseReferenceBackend(
+  prompt: string
+) {
   const text = prompt.toLowerCase();
 
   const terms = [
@@ -76,7 +64,6 @@ function shouldUseReferenceBackend(prompt: string) {
     "buttocks",
     "ass",
     "rear view",
-    "rear-view",
     "cheeky",
     "micro bikini",
     "topless",
@@ -90,7 +77,7 @@ function shouldUseReferenceBackend(prompt: string) {
 }
 
 // =====================================================
-// GET RANDOM REFERENCE IMAGE
+// RANDOM REFERENCE IMAGE
 // =====================================================
 
 async function getRandomReferenceImage() {
@@ -121,7 +108,7 @@ async function getRandomReferenceImage() {
 
       body: JSON.stringify({
         prefix:
-          REFERENCE_FOLDER,
+          `${REFERENCE_FOLDER}/`,
 
         limit:
           100,
@@ -140,13 +127,13 @@ async function getRandomReferenceImage() {
     }
   );
 
-  const data =
+  const files =
     await response.json();
 
   if (!response.ok) {
     console.error(
       "REFERENCE LIST ERROR:",
-      data
+      files
     );
 
     throw new Error(
@@ -154,12 +141,12 @@ async function getRandomReferenceImage() {
     );
   }
 
-  const files =
-    Array.isArray(data)
-      ? data.filter((file: any) => {
+  const validFiles =
+    Array.isArray(files)
+      ? files.filter((file: any) => {
           const name =
             String(
-              file?.name || ""
+              file.name || ""
             ).toLowerCase();
 
           return (
@@ -171,22 +158,22 @@ async function getRandomReferenceImage() {
         })
       : [];
 
-  if (!files.length) {
+  if (!validFiles.length) {
     console.error(
-      "REFERENCE FOLDER CONTENT:",
-      data
+      "REFERENCE FILE LIST:",
+      files
     );
 
     throw new Error(
-      "No Erika reference images found"
+      "No reference images found in erika-photos/references"
     );
   }
 
   const selected =
-    files[
+    validFiles[
       Math.floor(
         Math.random() *
-          files.length
+          validFiles.length
       )
     ];
 
@@ -204,12 +191,12 @@ async function getRandomReferenceImage() {
     `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${fullPath}`;
 
   console.log(
-    "ERIKA REFERENCE SELECTED:",
+    "REFERENCE SELECTED:",
     fullPath
   );
 
   console.log(
-    "ERIKA REFERENCE URL:",
+    "REFERENCE URL:",
     publicUrl
   );
 
@@ -223,7 +210,7 @@ async function getRandomReferenceImage() {
 }
 
 // =====================================================
-// POLL REPLICATE
+// WAIT FOR REPLICATE
 // =====================================================
 
 async function waitForPrediction(
@@ -269,7 +256,7 @@ async function waitForPrediction(
       );
 
       throw new Error(
-        "Could not check generation status"
+        "Could not check photo status"
       );
     }
 
@@ -286,17 +273,12 @@ async function waitForPrediction(
 }
 
 // =====================================================
-// NORMAL ERIKA GENERATOR
-// ERIKAFINAL + REALISM
+// NORMAL ERIKA PHOTO
 // =====================================================
 
 async function generateNormalPhoto(
   prompt: string
 ) {
-  console.log(
-    "PHOTO ROUTE: ERIKAFINAL"
-  );
-
   const finalPrompt = `
 ${ERIKA_TRIGGER}, ${prompt}
 
@@ -327,8 +309,7 @@ authentic candid photography
 `.trim();
 
   console.log(
-    "FINAL ERIKA PROMPT:",
-    finalPrompt
+    "PHOTO ROUTE: ERIKAFINAL"
   );
 
   const response =
@@ -397,14 +378,14 @@ authentic candid photography
 
   if (!response.ok) {
     console.error(
-      "NORMAL MODEL START ERROR:",
+      "NORMAL START ERROR:",
       prediction
     );
 
     throw new Error(
       prediction?.detail ||
         prediction?.error ||
-        "Could not start normal Erika generation"
+        "Could not start normal photo"
     );
   }
 
@@ -427,12 +408,12 @@ authentic candid photography
     );
 
     throw new Error(
-      result?.error ||
-        "Normal photo generation failed"
+      result.error ||
+        "Normal photo failed"
     );
   }
 
-  const image =
+  const output =
     Array.isArray(
       result.output
     )
@@ -440,16 +421,18 @@ authentic candid photography
       : result.output;
 
   if (
-    !image ||
-    typeof image !== "string"
+    !output ||
+    typeof output !== "string"
   ) {
     throw new Error(
-      "Normal generator returned no image"
+      "Normal model returned no image"
     );
   }
 
   return {
-    image,
+    image:
+      output,
+
     backend:
       "erikafinal",
 
@@ -459,7 +442,7 @@ authentic candid photography
 }
 
 // =====================================================
-// REFERENCE BACKEND
+// REFERENCE / ADULT PHOTO
 // =====================================================
 
 async function generateReferencePhoto(
@@ -473,20 +456,17 @@ async function generateReferencePhoto(
     await getRandomReferenceImage();
 
   const finalPrompt = `
-Photorealistic photograph of the same adult woman shown in the reference image.
-Preserve her recognizable facial identity and overall appearance.
-
-${prompt}
-
-Natural realistic skin texture,
-realistic facial features,
-realistic hair strands,
+photorealistic photograph of the same adult woman shown in the reference image,
+preserve her recognizable facial identity,
+${prompt},
+natural realistic skin texture,
+realistic facial detail,
+realistic hair texture,
+realistic fabric texture,
 natural body posture,
-realistic fabric,
-natural lighting,
-realistic shadows,
-high photographic detail,
-authentic photography.
+realistic lighting,
+natural shadows,
+high photographic detail
 `.trim();
 
   console.log(
@@ -494,9 +474,11 @@ authentic photography.
     finalPrompt
   );
 
+  // IMPORTANT:
+  // Use version-specific Replicate prediction endpoint.
   const response =
     await fetch(
-      REFERENCE_MODEL_URL,
+      "https://api.replicate.com/v1/predictions",
       {
         method:
           "POST",
@@ -511,12 +493,18 @@ authentic photography.
 
         body:
           JSON.stringify({
+            version:
+              REFERENCE_VERSION,
+
             input: {
               prompt:
                 finalPrompt,
 
               reference_image:
                 reference.url,
+
+              negative_prompt:
+                "lowres, bad anatomy, bad hands, text, watermark, blurry",
 
               width:
                 768,
@@ -531,7 +519,7 @@ authentic photography.
                 7,
 
               sampler_name:
-                "dpmpp_2m",
+                "dpmpp_2m_sde",
 
               scheduler:
                 "karras",
@@ -539,14 +527,14 @@ authentic photography.
               seed:
                 0,
 
-              hyperlora_weight:
-                0.65,
+              face_weight:
+                0.8,
 
               instantid_weight:
                 0.8,
 
               facedetail_strength:
-                0.45,
+                0.5,
             },
           }),
       }
@@ -564,7 +552,7 @@ authentic photography.
     throw new Error(
       prediction?.detail ||
         prediction?.error ||
-        "Could not start reference generation"
+        "Could not start reference photo"
     );
   }
 
@@ -587,12 +575,12 @@ authentic photography.
     );
 
     throw new Error(
-      result?.error ||
-        "Reference generation failed"
+      result.error ||
+        "Reference photo failed"
     );
   }
 
-  const image =
+  const output =
     Array.isArray(
       result.output
     )
@@ -600,16 +588,17 @@ authentic photography.
       : result.output;
 
   if (
-    !image ||
-    typeof image !== "string"
+    !output ||
+    typeof output !== "string"
   ) {
     throw new Error(
-      "Reference generator returned no image"
+      "Reference model returned no image"
     );
   }
 
   return {
-    image,
+    image:
+      output,
 
     backend:
       "reference",
@@ -636,7 +625,9 @@ async function saveImage(
   }
 
   const imageResponse =
-    await fetch(sourceUrl);
+    await fetch(
+      sourceUrl
+    );
 
   if (!imageResponse.ok) {
     throw new Error(
@@ -650,19 +641,24 @@ async function saveImage(
   const contentType =
     imageResponse.headers.get(
       "content-type"
-    ) ||
-    "image/jpeg";
+    ) || "image/jpeg";
 
   let extension =
     "jpg";
 
   if (
-    contentType.includes("png")
+    contentType.includes(
+      "png"
+    )
   ) {
     extension =
       "png";
-  } else if (
-    contentType.includes("webp")
+  }
+
+  if (
+    contentType.includes(
+      "webp"
+    )
   ) {
     extension =
       "webp";
@@ -698,12 +694,12 @@ async function saveImage(
     );
 
   if (!uploadResponse.ok) {
-    const details =
+    const uploadError =
       await uploadResponse.text();
 
     console.error(
       "SUPABASE UPLOAD ERROR:",
-      details
+      uploadError
     );
 
     throw new Error(
@@ -711,12 +707,11 @@ async function saveImage(
     );
   }
 
-  const publicUrl =
-    `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${fileName}`;
-
   return {
-    publicUrl,
     fileName,
+
+    publicUrl:
+      `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${fileName}`,
   };
 }
 
@@ -734,32 +729,13 @@ export async function POST(
           error:
             "Missing REPLICATE_API_TOKEN",
         },
+
         {
           status:
             500,
         }
       );
     }
-
-    if (
-      !SUPABASE_URL ||
-      !SUPABASE_SERVICE_ROLE_KEY
-    ) {
-      return Response.json(
-        {
-          error:
-            "Missing Supabase environment variables",
-        },
-        {
-          status:
-            500,
-        }
-      );
-    }
-
-    // -----------------------------------------------
-    // READ BODY
-    // -----------------------------------------------
 
     let body: any =
       {};
@@ -776,10 +752,6 @@ export async function POST(
       "PHOTO BODY RECEIVED:",
       body
     );
-
-    // -----------------------------------------------
-    // ACCEPT ALL KNOWN PROMPT NAMES
-    // -----------------------------------------------
 
     const rawPrompt =
       body?.prompt ??
@@ -801,6 +773,7 @@ export async function POST(
           error:
             "No photo prompt received",
         },
+
         {
           status:
             400,
@@ -813,24 +786,20 @@ export async function POST(
       prompt
     );
 
-    // -----------------------------------------------
-    // ROUTE PHOTO
-    // -----------------------------------------------
-
-    const useReferenceBackend =
+    const useReference =
       shouldUseReferenceBackend(
         prompt
       );
 
     console.log(
       "BACKEND SELECTED:",
-      useReferenceBackend
+      useReference
         ? "REFERENCE"
         : "ERIKAFINAL"
     );
 
     const generated =
-      useReferenceBackend
+      useReference
         ? await generateReferencePhoto(
             prompt
           )
@@ -838,28 +807,20 @@ export async function POST(
             prompt
           );
 
-    // -----------------------------------------------
-    // SAVE PERMANENT COPY
-    // -----------------------------------------------
-
-    const saved =
+    const stored =
       await saveImage(
         generated.image
       );
-
-    // -----------------------------------------------
-    // RETURN TO APP
-    // -----------------------------------------------
 
     return Response.json({
       type:
         "photo",
 
       image:
-        saved.publicUrl,
+        stored.publicUrl,
 
       imageUrl:
-        saved.publicUrl,
+        stored.publicUrl,
 
       metadata: {
         backend:
@@ -872,7 +833,7 @@ export async function POST(
           prompt,
 
         storageFile:
-          saved.fileName,
+          stored.fileName,
       },
     });
   } catch (error) {
@@ -888,6 +849,7 @@ export async function POST(
             ? error.message
             : "Unknown photo generation error",
       },
+
       {
         status:
           500,
