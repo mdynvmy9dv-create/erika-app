@@ -16,17 +16,6 @@ const REALISM_LORA =
 const MODEL_URL =
   "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions";
 
-const PHOTOREALISM_SUFFIX = `
-candid iphone photo,
-ordinary bedroom,
-natural indoor light,
-real skin,
-visible pores,
-no beauty filter,
-no airbrush,
-slight noise
-`.trim();
-
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -78,17 +67,26 @@ async function generateErikaPhoto(prompt: string) {
     .replace(/The mandatory user visual instructions[\s\S]*/i, "")
     .trim();
 
-const finalPrompt = `
+  const lower = cleaned.toLowerCase();
+
+  const clothingLock = lower.includes("panti")
+    ? "wearing only panties, bare back, no bra straps"
+    : "";
+
+  const poseLock =
+    lower.includes("stomach") || lower.includes("on your stomach")
+      ? "lying on her stomach, looking back over her shoulder, cropped at mid-thigh"
+      : "cropped at mid-thigh";
+
+  const finalPrompt = `
 ERIKAFINAL, exact same woman as always, same face, same body, same long dark wavy hair,
 ${cleaned},
-lying on her stomach on a bed, looking back over her shoulder,
-natural body, two arms, two legs, correct anatomy,
-feet out of frame, no extra limbs, no extra clothing,
+${poseLock},
+${clothingLock},
+close crop from head to thighs,
+natural body, two arms, correct anatomy,
 candid iphone photo, ordinary bedroom, natural indoor light,
-real skin, visible pores, no beauty filter
-`.replace(/\s+/g, " ").trim();
-${cleaned},
-${PHOTOREALISM_SUFFIX}
+real skin, visible pores
 `.replace(/\s+/g, " ").trim();
 
   console.log("USING ERIKA LORA BACKEND");
