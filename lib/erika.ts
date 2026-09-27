@@ -2,8 +2,10 @@ export const ERIKA = {
   trigger: "ERIKAFINAL",
   name: "Erika",
   identity:
-    "ERIKAFINAL woman, exact same woman as always, same face, same body, long dark wavy hair, brown eyes, no tattoos",
+    "ERIKAFINAL woman, exact same woman as always, same face, same body, long dark wavy hair, brown eyes",
   settingDefault: "ordinary bedroom",
+  referenceImage:
+    "https://kkrmnmmpfnyhrpuyzosb.supabase.co/storage/v1/object/public/erika-photos/references/IMG_3827.jpeg",
 };
 
 export type PhotoSlots = {
@@ -14,7 +16,7 @@ export type PhotoSlots = {
 };
 
 const HARD_POSE =
-  /behind|from behind|all fours|hands and knees|doggy|on her knees/i;
+  /behind|from behind|all fours|hands and knees|doggy|on her knees|stomach/i;
 
 export function isHardPose(text: string) {
   return HARD_POSE.test(text);
@@ -24,23 +26,52 @@ export function slotsFromUserText(userText: string): PhotoSlots {
   const text = userText.toLowerCase();
 
   let pose = "standing facing the camera";
+  let framing = "waist-up";
+
   if (text.includes("stomach") || text.includes("on your stomach")) {
-    pose = "lying on her stomach, looking back over her shoulder";
-  } else if (text.includes("all fours") || text.includes("hands and knees") || text.includes("doggy")) {
-    pose = "on her hands and knees on the bed, camera behind her, head turned toward the camera";
-  } else if (text.includes("from behind") || text.includes("facing away") || text.includes("your ass")) {
+    pose =
+      "lying flat on her stomach on the bed, legs down on the mattress, looking back over her shoulder";
+    framing = "from head to hips";
+  } else if (
+    text.includes("all fours") ||
+    text.includes("hands and knees") ||
+    text.includes("doggy")
+  ) {
+    pose =
+      "on her hands and knees on the bed, camera behind her, head turned toward the camera";
+    framing = "full body in frame";
+  } else if (
+    text.includes("from behind") ||
+    text.includes("facing away") ||
+    text.includes("your ass")
+  ) {
     pose = "standing with her back to the camera, looking back over her shoulder";
-  } else if (text.includes("sitting") || text.includes("on the bed")) {
+    framing = "from head to thighs";
+  } else if (text.includes("sitting")) {
     pose = "sitting on the edge of the bed facing the camera";
-  } else if (text.includes("lying") || text.includes("laying") || text.includes("on your back")) {
+    framing = "waist-up";
+  } else if (
+    text.includes("lying") ||
+    text.includes("laying") ||
+    text.includes("on your back")
+  ) {
     pose = "lying on her back on the bed looking at the camera";
+    framing = "from head to hips";
+  }
+
+  if (text.includes("full body") || text.includes("head to toe")) {
+    framing = "full body in frame";
   }
 
   let clothing = "casual indoor clothes";
-  if (text.includes("nude") || text.includes("naked") || text.includes("nothing on")) {
+  if (
+    text.includes("nude") ||
+    text.includes("naked") ||
+    text.includes("nothing on")
+  ) {
     clothing = "nude";
   } else if (text.includes("panti")) {
-    clothing = "only panties";
+    clothing = "only panties, bare back";
   } else if (text.includes("jeans")) {
     clothing = "light wash jeans and a simple top";
   } else if (text.includes("dress")) {
@@ -49,13 +80,6 @@ export function slotsFromUserText(userText: string): PhotoSlots {
     clothing = "a thin tank top and panties";
   } else if (text.includes("lingerie") || text.includes("sexy")) {
     clothing = "simple lingerie";
-  }
-
-  let framing = "waist-up";
-  if (text.includes("full body") || text.includes("head to toe") || isHardPose(text)) {
-    framing = "full body in frame";
-  } else if (text.includes("crop") || text.includes("thigh")) {
-    framing = "cropped at mid-thigh";
   }
 
   return {
@@ -80,19 +104,21 @@ export function compilePhotoPrompt(slots: PhotoSlots) {
 export function photoSettings(slots: PhotoSlots) {
   if (isHardPose(`${slots.pose} ${slots.framing}`)) {
     return {
-      lora_scale: 0.7,
-      extra_lora_scale: 0.25,
+      lora_scale: 0.75,
+      extra_lora_scale: 0.3,
       guidance: 2.2,
       aspect_ratio: "3:4",
-      num_outputs: 2,
+      num_outputs: 1,
+      prompt_strength: 0.72,
     };
   }
 
   return {
     lora_scale: 0.85,
-    extra_lora_scale: 0.5,
+    extra_lora_scale: 0.45,
     guidance: 2.3,
     aspect_ratio: "4:5",
     num_outputs: 1,
+    prompt_strength: 0.55,
   };
 }
