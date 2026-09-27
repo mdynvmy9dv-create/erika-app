@@ -1,6 +1,10 @@
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+// =====================================================
+// ENVIRONMENT
+// =====================================================
+
 const REPLICATE_API_TOKEN =
   process.env.REPLICATE_API_TOKEN;
 
@@ -10,11 +14,15 @@ const SUPABASE_URL =
 const SUPABASE_SERVICE_ROLE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// =====================================================
+// SUPABASE
+// =====================================================
+
 const BUCKET = "erika-photos";
 const REFERENCE_FOLDER = "references";
 
 // =====================================================
-// ERIKA FINAL
+// ERIKA FINAL LORA
 // =====================================================
 
 const ERIKA_TRIGGER = "ERIKAFINAL";
@@ -22,17 +30,35 @@ const ERIKA_TRIGGER = "ERIKAFINAL";
 const ERIKA_LORA =
   "https://replicate.delivery/xezq/eOU7OpAeaHlwoEavigAhW5vYackREGjOGY3LCyv1MwWcAeiuA/flux-lora.tar";
 
+// =====================================================
+// REALISM LORA
+// =====================================================
+
 const REALISM_LORA =
   "https://huggingface.co/XLabs-AI/flux-RealismLora/resolve/main/lora.safetensors";
 
-// Normal Erika backend
+// =====================================================
+// NORMAL MODEL
+// =====================================================
+
 const NORMAL_MODEL_URL =
   "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions";
 
-// Adult/reference backend version
-const REFERENCE_VERSION =
-  "d9aab9a980d2368bc9d4b9537267ff55fad72c74d4d405de936101c18e45ecfc";
+// =====================================================
+// REFERENCE MODEL
+// =====================================================
 
+// Non-official Replicate model.
+// MUST be called with a specific version ID.
+
+const REFERENCE_MODEL_VERSION =
+  "c0155d70758d6dd8877a763edd84c2d461c40e4daf476de6817742a1cc9d02ed";
+
+const GENERIC_PREDICTIONS_URL =
+  "https://api.replicate.com/v1/predictions";
+
+// =====================================================
+// HELPERS
 // =====================================================
 
 function sleep(ms: number) {
@@ -42,13 +68,14 @@ function sleep(ms: number) {
 }
 
 // =====================================================
-// ROUTING
+// DECIDE WHICH BACKEND TO USE
 // =====================================================
 
 function shouldUseReferenceBackend(
   prompt: string
 ) {
-  const text = prompt.toLowerCase();
+  const text =
+    prompt.toLowerCase();
 
   const terms = [
     "panties",
@@ -62,7 +89,6 @@ function shouldUseReferenceBackend(
     "booty",
     "butt",
     "buttocks",
-    "ass",
     "rear view",
     "cheeky",
     "micro bikini",
@@ -77,7 +103,7 @@ function shouldUseReferenceBackend(
 }
 
 // =====================================================
-// RANDOM REFERENCE IMAGE
+// GET RANDOM REFERENCE FROM SUPABASE
 // =====================================================
 
 async function getRandomReferenceImage() {
@@ -137,7 +163,7 @@ async function getRandomReferenceImage() {
     );
 
     throw new Error(
-      "Could not read references folder"
+      "Could not read Erika references folder"
     );
   }
 
@@ -160,12 +186,12 @@ async function getRandomReferenceImage() {
 
   if (!validFiles.length) {
     console.error(
-      "REFERENCE FILE LIST:",
+      "REFERENCE FILES RETURNED:",
       files
     );
 
     throw new Error(
-      "No reference images found in erika-photos/references"
+      "No Erika reference images found in references folder"
     );
   }
 
@@ -191,12 +217,12 @@ async function getRandomReferenceImage() {
     `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${fullPath}`;
 
   console.log(
-    "REFERENCE SELECTED:",
+    "ERIKA REFERENCE SELECTED:",
     fullPath
   );
 
   console.log(
-    "REFERENCE URL:",
+    "ERIKA REFERENCE URL:",
     publicUrl
   );
 
@@ -256,7 +282,7 @@ async function waitForPrediction(
       );
 
       throw new Error(
-        "Could not check photo status"
+        "Could not check photo generation"
       );
     }
 
@@ -273,7 +299,7 @@ async function waitForPrediction(
 }
 
 // =====================================================
-// NORMAL ERIKA PHOTO
+// NORMAL ERIKA GENERATOR
 // =====================================================
 
 async function generateNormalPhoto(
@@ -309,7 +335,12 @@ authentic candid photography
 `.trim();
 
   console.log(
-    "PHOTO ROUTE: ERIKAFINAL"
+    "USING NORMAL ERIKA BACKEND"
+  );
+
+  console.log(
+    "FINAL ERIKA PROMPT:",
+    finalPrompt
   );
 
   const response =
@@ -378,14 +409,14 @@ authentic candid photography
 
   if (!response.ok) {
     console.error(
-      "NORMAL START ERROR:",
+      "NORMAL MODEL START ERROR:",
       prediction
     );
 
     throw new Error(
       prediction?.detail ||
         prediction?.error ||
-        "Could not start normal photo"
+        "Could not start Erika generation"
     );
   }
 
@@ -409,7 +440,7 @@ authentic candid photography
 
     throw new Error(
       result.error ||
-        "Normal photo failed"
+        "Normal Erika photo failed"
     );
   }
 
@@ -425,7 +456,7 @@ authentic candid photography
     typeof output !== "string"
   ) {
     throw new Error(
-      "Normal model returned no image"
+      "Normal generator returned no image"
     );
   }
 
@@ -442,43 +473,46 @@ authentic candid photography
 }
 
 // =====================================================
-// REFERENCE / ADULT PHOTO
+// REFERENCE GENERATOR
 // =====================================================
 
 async function generateReferencePhoto(
   prompt: string
 ) {
   console.log(
-    "PHOTO ROUTE: REFERENCE"
+    "USING REFERENCE BACKEND"
   );
 
   const reference =
     await getRandomReferenceImage();
 
-  const finalPrompt = `
+  const referencePrompt = `
 photorealistic photograph of the same adult woman shown in the reference image,
-preserve her recognizable facial identity,
+preserve her facial identity and recognizable appearance,
 ${prompt},
 natural realistic skin texture,
-realistic facial detail,
-realistic hair texture,
-realistic fabric texture,
+realistic facial features,
+realistic hair strands,
 natural body posture,
-realistic lighting,
-natural shadows,
-high photographic detail
+realistic fabric,
+natural lighting,
+realistic shadows,
+high photographic detail,
+authentic photography
 `.trim();
 
   console.log(
     "REFERENCE PROMPT:",
-    finalPrompt
+    referencePrompt
   );
 
   // IMPORTANT:
-  // Use version-specific Replicate prediction endpoint.
+  // This model is not an official Replicate model,
+  // so we use /v1/predictions and provide the exact version.
+
   const response =
     await fetch(
-      "https://api.replicate.com/v1/predictions",
+      GENERIC_PREDICTIONS_URL,
       {
         method:
           "POST",
@@ -494,17 +528,14 @@ high photographic detail
         body:
           JSON.stringify({
             version:
-              REFERENCE_VERSION,
+              REFERENCE_MODEL_VERSION,
 
             input: {
               prompt:
-                finalPrompt,
+                referencePrompt,
 
               reference_image:
                 reference.url,
-
-              negative_prompt:
-                "lowres, bad anatomy, bad hands, text, watermark, blurry",
 
               width:
                 768,
@@ -527,7 +558,7 @@ high photographic detail
               seed:
                 0,
 
-              face_weight:
+              hyperlora_weight:
                 0.8,
 
               instantid_weight:
@@ -535,6 +566,9 @@ high photographic detail
 
               facedetail_strength:
                 0.5,
+
+              negative_prompt:
+                "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, jpeg artifacts, signature, watermark, username, blurry",
             },
           }),
       }
@@ -552,7 +586,7 @@ high photographic detail
     throw new Error(
       prediction?.detail ||
         prediction?.error ||
-        "Could not start reference photo"
+        "Could not start reference generation"
     );
   }
 
@@ -576,7 +610,7 @@ high photographic detail
 
     throw new Error(
       result.error ||
-        "Reference photo failed"
+        "Reference photo generation failed"
     );
   }
 
@@ -592,7 +626,7 @@ high photographic detail
     typeof output !== "string"
   ) {
     throw new Error(
-      "Reference model returned no image"
+      "Reference generator returned no image"
     );
   }
 
@@ -609,7 +643,7 @@ high photographic detail
 }
 
 // =====================================================
-// SAVE TO SUPABASE
+// SAVE GENERATED IMAGE TO SUPABASE
 // =====================================================
 
 async function saveImage(
@@ -631,7 +665,7 @@ async function saveImage(
 
   if (!imageResponse.ok) {
     throw new Error(
-      "Could not download generated photo"
+      "Could not download generated image"
     );
   }
 
@@ -667,7 +701,7 @@ async function saveImage(
   const fileName =
     `erika-${Date.now()}-${crypto.randomUUID()}.${extension}`;
 
-  const uploadResponse =
+  const response =
     await fetch(
       `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${fileName}`,
       {
@@ -693,17 +727,17 @@ async function saveImage(
       }
     );
 
-  if (!uploadResponse.ok) {
-    const uploadError =
-      await uploadResponse.text();
+  if (!response.ok) {
+    const errorText =
+      await response.text();
 
     console.error(
       "SUPABASE UPLOAD ERROR:",
-      uploadError
+      errorText
     );
 
     throw new Error(
-      "Generated image could not be saved"
+      "Generated photo could not be saved"
     );
   }
 
@@ -729,7 +763,6 @@ export async function POST(
           error:
             "Missing REPLICATE_API_TOKEN",
         },
-
         {
           status:
             500,
@@ -773,7 +806,6 @@ export async function POST(
           error:
             "No photo prompt received",
         },
-
         {
           status:
             400,
@@ -792,7 +824,7 @@ export async function POST(
       );
 
     console.log(
-      "BACKEND SELECTED:",
+      "PHOTO ROUTE:",
       useReference
         ? "REFERENCE"
         : "ERIKAFINAL"
@@ -849,7 +881,6 @@ export async function POST(
             ? error.message
             : "Unknown photo generation error",
       },
-
       {
         status:
           500,
