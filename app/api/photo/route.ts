@@ -1,25 +1,11 @@
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-// =====================================================
-// ENVIRONMENT
-// =====================================================
-
 const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// =====================================================
-// SUPABASE
-// =====================================================
-
 const BUCKET = "erika-photos";
-
-// =====================================================
-// LORAS
-// =====================================================
-
-const ERIKA_TRIGGER = "ERIKAFINAL";
 
 const ERIKA_LORA =
   "https://replicate.delivery/xezq/eOU7OpAeaHlwoEavigAhW5vYackREGjOGY3LCyv1MwWcAeiuA/flux-lora.tar";
@@ -27,16 +13,8 @@ const ERIKA_LORA =
 const REALISM_LORA =
   "https://huggingface.co/XLabs-AI/flux-RealismLora/resolve/main/lora.safetensors";
 
-// =====================================================
-// MODEL
-// =====================================================
-
 const MODEL_URL =
   "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions";
-
-// =====================================================
-// PHOTOREALISM SUFFIX
-// =====================================================
 
 const PHOTOREALISM_SUFFIX = `
 candid iphone photo,
@@ -49,52 +27,6 @@ no airbrush,
 slight noise
 `.trim();
 
-async function generateErikaPhoto(prompt: string) {
-  const cleaned = prompt
-    .replace(/MANDATORY USER VISUAL INSTRUCTIONS:[\s\S]*/i, "")
-    .replace(/The mandatory user visual instructions[\s\S]*/i, "")
-    .trim();
-
-  const finalPrompt = `
-ERIKAFINAL, exact same woman as always,
-same face, same body, same long dark wavy hair,
-${cleaned},
-${PHOTOREALISM_SUFFIX}
-`.replace(/\s+/g, " ").trim();
-
-  console.log("FINAL PROMPT:", finalPrompt);
-
-  const response = await fetch(MODEL_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${REPLICATE_API_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      input: {
-        prompt: finalPrompt,
-        lora_weights: ERIKA_LORA,
-        lora_scale: 1.08,
-        extra_lora: REALISM_LORA,
-        extra_lora_scale: 0.7,
-        guidance: 2.1,
-        num_inference_steps: 32,
-        aspect_ratio: "4:5",
-        num_outputs: 1,
-        go_fast: false,
-        megapixels: "1",
-        output_format: "jpg",
-        output_quality: 95,
-        seed: getRandomSeed(),
-        disable_safety_checker: true,
-      },
-    }),
-  });
-
-// =====================================================
-// HELPERS
-// =====================================================
-
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -102,10 +34,6 @@ function sleep(ms: number) {
 function getRandomSeed() {
   return Math.floor(Math.random() * 1_000_000_000);
 }
-
-// =====================================================
-// WAIT FOR REPLICATE
-// =====================================================
 
 async function waitForPrediction(prediction: any) {
   let current = prediction;
@@ -144,18 +72,18 @@ async function waitForPrediction(prediction: any) {
   return current;
 }
 
-// =====================================================
-// GENERATE PHOTO
-// =====================================================
-
 async function generateErikaPhoto(prompt: string) {
-  let finalPrompt = prompt.trim();
+  const cleaned = prompt
+    .replace(/MANDATORY USER VISUAL INSTRUCTIONS:[\s\S]*/i, "")
+    .replace(/The mandatory user visual instructions[\s\S]*/i, "")
+    .trim();
 
-  if (!finalPrompt.toUpperCase().includes("ERIKAFINAL")) {
-    finalPrompt = `ERIKAFINAL, exact same woman as always, same face, same body, same long dark wavy hair, ${finalPrompt}`;
-  }
-
-  finalPrompt = `${finalPrompt}\n\n${PHOTOREALISM_SUFFIX}`;
+  const finalPrompt = `
+ERIKAFINAL, exact same woman as always,
+same face, same body, same long dark wavy hair,
+${cleaned},
+${PHOTOREALISM_SUFFIX}
+`.replace(/\s+/g, " ").trim();
 
   console.log("USING ERIKA LORA BACKEND");
   console.log("FINAL PROMPT:", finalPrompt);
@@ -170,10 +98,10 @@ async function generateErikaPhoto(prompt: string) {
       input: {
         prompt: finalPrompt,
         lora_weights: ERIKA_LORA,
-        lora_scale: 1.05,
+        lora_scale: 1.08,
         extra_lora: REALISM_LORA,
-        extra_lora_scale: 0.65,
-        guidance: 2.2,
+        extra_lora_scale: 0.7,
+        guidance: 2.1,
         num_inference_steps: 32,
         aspect_ratio: "4:5",
         num_outputs: 1,
@@ -213,10 +141,6 @@ async function generateErikaPhoto(prompt: string) {
 
   return output;
 }
-
-// =====================================================
-// SAVE TO SUPABASE
-// =====================================================
 
 async function saveImage(sourceUrl: string) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -263,10 +187,6 @@ async function saveImage(sourceUrl: string) {
   };
 }
 
-// =====================================================
-// MAIN ROUTE
-// =====================================================
-
 export async function POST(request: Request) {
   try {
     if (!REPLICATE_API_TOKEN) {
@@ -276,7 +196,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // --- DEBUGGING ---
     const rawBody = await request.text();
     console.log("RAW BODY RECEIVED:", rawBody);
 
@@ -314,9 +233,6 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    // --- END DEBUGGING ---
-
-    console.log("PROMPT USED:", prompt);
 
     const imageUrl = await generateErikaPhoto(prompt);
     const stored = await saveImage(imageUrl);
