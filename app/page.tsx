@@ -68,8 +68,7 @@ export default function Home() {
             .map((message: any) => {
               if (
                 message.type === "text" &&
-                (message.role === "user" ||
-                  message.role === "assistant")
+                (message.role === "user" || message.role === "assistant")
               ) {
                 return {
                   role: message.role,
@@ -143,24 +142,10 @@ export default function Home() {
         body: JSON.stringify({
           role: message.role,
           type: message.type,
-
-          text:
-            message.type === "text"
-              ? message.text
-              : null,
-
-          image:
-            message.type === "image"
-              ? message.image
-              : null,
-
-          source:
-            message.type === "image"
-              ? "photo"
-              : message.source || "text",
-
+          text: message.type === "text" ? message.text : null,
+          image: message.type === "image" ? message.image : null,
+          source: message.type === "image" ? "photo" : message.source || "text",
           conversation_id: "main",
-
           metadata,
         }),
       });
@@ -199,10 +184,7 @@ export default function Home() {
         .slice(-40)
         .map((message) => ({
           role: message.role,
-          content:
-            message.type === "text"
-              ? message.text
-              : "",
+          content: message.type === "text" ? message.text : "",
         }));
 
       const chatResponse = await fetch("/api/chat", {
@@ -220,9 +202,7 @@ export default function Home() {
       console.log("CHAT RESPONSE:", chatData);
 
       if (!chatResponse.ok) {
-        throw new Error(
-          chatData.error || "Chat request failed"
-        );
+        throw new Error(chatData.error || "Chat request failed");
       }
 
       // -------------------------
@@ -237,13 +217,8 @@ export default function Home() {
           source: "text",
         };
 
-        setMessages((current) => [
-          ...current,
-          assistantMessage,
-        ]);
-
+        setMessages((current) => [...current, assistantMessage]);
         await saveMessage(assistantMessage);
-
         return;
       }
 
@@ -260,32 +235,26 @@ export default function Home() {
             source: "text",
           };
 
-          setMessages((current) => [
-            ...current,
-            beforePhotoMessage,
-          ]);
-
+          setMessages((current) => [...current, beforePhotoMessage]);
           await saveMessage(beforePhotoMessage);
         }
 
         setActivity("photo");
 
-        // IMPORTANT FIX:
-        // Supports both naming styles from the chat route.
-        // If neither exists, use the user's exact request.
-        const photoPrompt =
-          (
-            chatData.photo_prompt ??
-            chatData.photoPrompt ??
-            cleaned
-          )
-            ?.toString()
-            .trim() || cleaned;
+        // More defensive prompt extraction
+        let photoPrompt =
+          chatData.photo_prompt ||
+          chatData.photoPrompt ||
+          cleaned;
 
-        console.log(
-          "SENDING PHOTO PROMPT:",
-          photoPrompt
-        );
+        photoPrompt = (photoPrompt || "").toString().trim();
+
+        if (!photoPrompt) {
+          console.error("No photo prompt available", chatData);
+          throw new Error("No photo prompt received from chat");
+        }
+
+        console.log("SENDING PHOTO PROMPT:", photoPrompt);
 
         const photoResponse = await fetch("/api/photo", {
           method: "POST",
@@ -301,18 +270,10 @@ export default function Home() {
 
         console.log("PHOTO RESPONSE:", photoData);
 
-        const returnedImage =
-          photoData.image ??
-          photoData.imageUrl;
+        const returnedImage = photoData.image ?? photoData.imageUrl;
 
-        if (
-          !photoResponse.ok ||
-          !returnedImage
-        ) {
-          throw new Error(
-            photoData.error ||
-              "Photo generation failed"
-          );
+        if (!photoResponse.ok || !returnedImage) {
+          throw new Error(photoData.error || "Photo generation failed");
         }
 
         const imageMessage: Message = {
@@ -322,17 +283,11 @@ export default function Home() {
           source: "photo",
         };
 
-        setMessages((current) => [
-          ...current,
-          imageMessage,
-        ]);
+        setMessages((current) => [...current, imageMessage]);
 
-        await saveMessage(
-          imageMessage,
-          photoData.metadata || {
-            prompt: photoPrompt,
-          }
-        );
+        await saveMessage(imageMessage, photoData.metadata || {
+          prompt: photoPrompt,
+        });
 
         return;
       }
@@ -371,17 +326,11 @@ export default function Home() {
         event.transcript
       ) {
         const transcript = event.transcript.trim();
-
         if (!transcript) return;
 
-        const key =
-          event.item_id ||
-          `user-${transcript}`;
+        const key = event.item_id || `user-${transcript}`;
 
-        if (savedVoiceItemsRef.current.has(key)) {
-          return;
-        }
-
+        if (savedVoiceItemsRef.current.has(key)) return;
         savedVoiceItemsRef.current.add(key);
 
         const message: Message = {
@@ -391,14 +340,9 @@ export default function Home() {
           source: "voice",
         };
 
-        setMessages((current) => [
-          ...current,
-          message,
-        ]);
-
+        setMessages((current) => [...current, message]);
         await saveMessage(message, {
-          realtime_item_id:
-            event.item_id || null,
+          realtime_item_id: event.item_id || null,
         });
 
         return;
@@ -409,27 +353,17 @@ export default function Home() {
       // -------------------------
 
       if (
-        (
-          event.type ===
-            "response.output_audio_transcript.done" ||
-          event.type ===
-            "response.audio_transcript.done"
-        ) &&
+        (event.type === "response.output_audio_transcript.done" ||
+          event.type === "response.audio_transcript.done") &&
         event.transcript
       ) {
         const transcript = event.transcript.trim();
-
         if (!transcript) return;
 
         const key =
-          event.item_id ||
-          event.response_id ||
-          `assistant-${transcript}`;
+          event.item_id || event.response_id || `assistant-${transcript}`;
 
-        if (savedVoiceItemsRef.current.has(key)) {
-          return;
-        }
-
+        if (savedVoiceItemsRef.current.has(key)) return;
         savedVoiceItemsRef.current.add(key);
 
         const message: Message = {
@@ -439,26 +373,16 @@ export default function Home() {
           source: "voice",
         };
 
-        setMessages((current) => [
-          ...current,
-          message,
-        ]);
-
+        setMessages((current) => [...current, message]);
         await saveMessage(message, {
-          realtime_item_id:
-            event.item_id || null,
-
-          realtime_response_id:
-            event.response_id || null,
+          realtime_item_id: event.item_id || null,
+          realtime_response_id: event.response_id || null,
         });
 
         return;
       }
     } catch (error) {
-      console.error(
-        "Realtime event handling error:",
-        error
-      );
+      console.error("Realtime event handling error:", error);
     }
   }
 
@@ -470,71 +394,41 @@ export default function Home() {
     if (voiceActive || voiceConnecting) return;
 
     setVoiceConnecting(true);
-
     savedVoiceItemsRef.current.clear();
 
     try {
-      const tokenResponse =
-        await fetch("/api/realtime");
+      const tokenResponse = await fetch("/api/realtime");
+      const tokenData = await tokenResponse.json();
 
-      const tokenData =
-        await tokenResponse.json();
-
-      if (
-        !tokenResponse.ok ||
-        !tokenData.value
-      ) {
-        throw new Error(
-          tokenData.error ||
-            "Could not get voice token"
-        );
+      if (!tokenResponse.ok || !tokenData.value) {
+        throw new Error(tokenData.error || "Could not get voice token");
       }
 
       const ephemeralKey = tokenData.value;
-
       const pc = new RTCPeerConnection();
-
       peerRef.current = pc;
 
-      // -------------------------
-      // ERIKA AUDIO OUTPUT
-      // -------------------------
-
-      const audio =
-        document.createElement("audio");
-
+      // Erika audio output
+      const audio = document.createElement("audio");
       audio.autoplay = true;
-
-      audio.setAttribute(
-        "playsinline",
-        "true"
-      );
-
+      audio.setAttribute("playsinline", "true");
       audioRef.current = audio;
 
       pc.ontrack = (event) => {
         audio.srcObject = event.streams[0];
-
         audio.play().catch((error) => {
-          console.error(
-            "Audio play error:",
-            error
-          );
+          console.error("Audio play error:", error);
         });
       };
 
-      // -------------------------
-      // IPHONE MICROPHONE
-      // -------------------------
-
-      const micStream =
-        await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
+      // Microphone
+      const micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
 
       micStreamRef.current = micStream;
 
@@ -542,85 +436,52 @@ export default function Home() {
         pc.addTrack(track, micStream);
       }
 
-      // -------------------------
-      // REALTIME DATA CHANNEL
-      // -------------------------
-
-      const dataChannel =
-        pc.createDataChannel("oai-events");
-
+      // Data channel
+      const dataChannel = pc.createDataChannel("oai-events");
       dataChannelRef.current = dataChannel;
 
       dataChannel.onopen = () => {
-        console.log(
-          "Realtime voice connected"
-        );
+        console.log("Realtime voice connected");
       };
 
-      dataChannel.onmessage = async (
-        messageEvent
-      ) => {
+      dataChannel.onmessage = async (messageEvent) => {
         try {
-          const realtimeEvent =
-            JSON.parse(messageEvent.data);
-
-          await handleRealtimeEvent(
-            realtimeEvent
-          );
+          const realtimeEvent = JSON.parse(messageEvent.data);
+          await handleRealtimeEvent(realtimeEvent);
         } catch (error) {
-          console.error(
-            "Realtime event parse error:",
-            error
-          );
+          console.error("Realtime event parse error:", error);
         }
       };
 
       dataChannel.onerror = (event) => {
-        console.error(
-          "Realtime channel error:",
-          event
-        );
+        console.error("Realtime channel error:", event);
       };
 
-      // -------------------------
-      // WEBRTC CONNECTION
-      // -------------------------
-
+      // WebRTC connection
       const offer = await pc.createOffer();
-
       await pc.setLocalDescription(offer);
 
       if (!offer.sdp) {
-        throw new Error(
-          "Missing WebRTC offer"
-        );
+        throw new Error("Missing WebRTC offer");
       }
 
       const realtimeResponse = await fetch(
         "https://api.openai.com/v1/realtime/calls",
         {
           method: "POST",
-
           body: offer.sdp,
-
           headers: {
-            Authorization:
-              `Bearer ${ephemeralKey}`,
-
-            "Content-Type":
-              "application/sdp",
+            Authorization: `Bearer ${ephemeralKey}`,
+            "Content-Type": "application/sdp",
           },
         }
       );
 
       if (!realtimeResponse.ok) {
-        throw new Error(
-          await realtimeResponse.text()
-        );
+        throw new Error(await realtimeResponse.text());
       }
 
-      const answerSdp =
-        await realtimeResponse.text();
+      const answerSdp = await realtimeResponse.text();
 
       await pc.setRemoteDescription({
         type: "answer",
@@ -629,16 +490,9 @@ export default function Home() {
 
       setVoiceActive(true);
     } catch (error) {
-      console.error(
-        "Voice connection error:",
-        error
-      );
-
+      console.error("Voice connection error:", error);
       stopVoice();
-
-      alert(
-        "Voice couldn't connect. Try again."
-      );
+      alert("Voice couldn't connect. Try again.");
     } finally {
       setVoiceConnecting(false);
     }
@@ -650,13 +504,9 @@ export default function Home() {
 
   function stopVoice() {
     if (micStreamRef.current) {
-      for (
-        const track of
-        micStreamRef.current.getTracks()
-      ) {
+      for (const track of micStreamRef.current.getTracks()) {
         track.stop();
       }
-
       micStreamRef.current = null;
     }
 
@@ -691,10 +541,7 @@ export default function Home() {
           <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-white/10 flex items-center justify-center text-2xl font-semibold">
             E
           </div>
-
-          <p className="text-white/50">
-            Loading Erika...
-          </p>
+          <p className="text-white/50">Loading Erika...</p>
         </div>
       </main>
     );
@@ -708,14 +555,9 @@ export default function Home() {
     return (
       <main className="min-h-[100dvh] bg-black text-white flex flex-col items-center justify-between px-6 py-14">
         <div className="text-center">
-          <p className="text-sm text-white/50">
-            Erika
-          </p>
-
+          <p className="text-sm text-white/50">Erika</p>
           <p className="mt-1 text-lg">
-            {voiceConnecting
-              ? "Connecting..."
-              : "Voice connected"}
+            {voiceConnecting ? "Connecting..." : "Voice connected"}
           </p>
         </div>
 
@@ -733,9 +575,7 @@ export default function Home() {
           </div>
 
           <p className="mt-8 text-white/50">
-            {voiceConnecting
-              ? "Starting call..."
-              : "Talk naturally"}
+            {voiceConnecting ? "Starting call..." : "Talk naturally"}
           </p>
         </div>
 
@@ -755,27 +595,18 @@ export default function Home() {
 
   return (
     <main className="min-h-[100dvh] bg-black text-white flex flex-col">
-
       {/* HEADER */}
-
       <header className="sticky top-0 z-10 bg-black/90 backdrop-blur-xl border-b border-white/10 px-4 py-3">
-
         <div className="flex items-center justify-between">
-
           <div className="flex items-center gap-3">
-
             <div className="h-11 w-11 rounded-full bg-white/10 flex items-center justify-center font-semibold">
               E
             </div>
 
             <div>
-              <h1 className="font-semibold">
-                Erika
-              </h1>
-
+              <h1 className="font-semibold">Erika</h1>
               <div className="flex items-center gap-1.5">
                 <span className="h-2 w-2 rounded-full bg-green-500" />
-
                 <p className="text-xs text-white/50">
                   {activity === "typing"
                     ? "typing..."
@@ -785,7 +616,6 @@ export default function Home() {
                 </p>
               </div>
             </div>
-
           </div>
 
           <button
@@ -794,23 +624,15 @@ export default function Home() {
           >
             Call
           </button>
-
         </div>
-
       </header>
 
       {/* MESSAGES */}
-
       <section className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
-
         {messages.map((message, index) => {
-
           if (message.type === "image") {
             return (
-              <div
-                key={index}
-                className="flex justify-start"
-              >
+              <div key={index} className="flex justify-start">
                 <img
                   src={message.image}
                   alt="Erika"
@@ -820,8 +642,7 @@ export default function Home() {
             );
           }
 
-          const voiceMessage =
-            message.source === "voice";
+          const voiceMessage = message.source === "voice";
 
           return (
             <div
@@ -832,7 +653,6 @@ export default function Home() {
                   : "flex justify-start"
               }
             >
-
               <div
                 className={
                   message.role === "user"
@@ -841,14 +661,10 @@ export default function Home() {
                 }
               >
                 <p>{message.text}</p>
-
                 {voiceMessage && (
-                  <p className="mt-1 text-[10px] text-white/35">
-                    voice
-                  </p>
+                  <p className="mt-1 text-[10px] text-white/35">voice</p>
                 )}
               </div>
-
             </div>
           );
         })}
@@ -856,39 +672,27 @@ export default function Home() {
         {activity !== "idle" && (
           <div className="flex justify-start">
             <div className="rounded-3xl rounded-bl-lg bg-white/10 px-4 py-3 text-white/50">
-              {activity === "photo"
-                ? "Taking a photo..."
-                : "•••"}
+              {activity === "photo" ? "Taking a photo..." : "•••"}
             </div>
           </div>
         )}
 
         <div ref={messagesEndRef} />
-
       </section>
 
       {/* MESSAGE BOX */}
-
       <footer
         className="sticky bottom-0 bg-black/90 backdrop-blur-xl border-t border-white/10 px-3 pt-3"
         style={{
-          paddingBottom:
-            "max(12px, env(safe-area-inset-bottom))",
+          paddingBottom: "max(12px, env(safe-area-inset-bottom))",
         }}
       >
-
         <div className="flex items-end gap-2">
-
           <textarea
             value={input}
-            onChange={(e) =>
-              setInput(e.target.value)
-            }
+            onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (
-                e.key === "Enter" &&
-                !e.shiftKey
-              ) {
+              if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 sendMessage();
               }
@@ -900,19 +704,13 @@ export default function Home() {
 
           <button
             onClick={sendMessage}
-            disabled={
-              activity !== "idle" ||
-              !input.trim()
-            }
+            disabled={activity !== "idle" || !input.trim()}
             className="h-12 rounded-full bg-white px-5 font-semibold text-black disabled:opacity-30"
           >
             Send
           </button>
-
         </div>
-
       </footer>
-
     </main>
   );
 }
