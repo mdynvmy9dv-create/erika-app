@@ -2,42 +2,13 @@ export const runtime = "nodejs";
 
 import { compilePhotoPrompt, slotsFromUserText } from "../../../lib/erika";
 
-const openaiKey = process.env.OPENAI_API_KEY;
+const xaiKey = process.env.XAI_API_KEY;
 
 type ChatMessage = {
   role?: string;
   content?: string;
   text?: string;
 };
-
-function extractOutputText(data: any): string {
-  if (typeof data?.output_text === "string" && data.output_text.trim()) {
-    return data.output_text.trim();
-  }
-
-  const pieces: string[] = [];
-
-  if (Array.isArray(data?.output)) {
-    for (const item of data.output) {
-      if (!Array.isArray(item?.content)) continue;
-      for (const content of item.content) {
-        if (typeof content?.text === "string" && content.text.trim()) {
-          pieces.push(content.text);
-        }
-      }
-    }
-  }
-
-  return pieces.join("\n").trim();
-}
-
-function cleanJson(text: string) {
-  return text
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-}
 
 function getUserText(body: any): string {
   if (typeof body?.message === "string" && body.message.trim()) {
@@ -87,17 +58,13 @@ function getConversationContext(body: any): string {
 }
 
 function looksLikePhotoRequest(text: string) {
-  return /(photo|pic|picture|selfie|send me|show me|let me see|wearing|nude|naked)/i.test(
+  return /(photo|pic|picture|selfie|send me|show me|let me see|wearing|nude|naked|panti|dress|jeans)/i.test(
     text
   );
 }
 
 export async function POST(req: Request) {
   try {
-    if (!openaiKey) {
-      return Response.json({ error: "Missing OPENAI_API_KEY" }, { status: 500 });
-    }
-
     const body = await req.json();
     const userText = getUserText(body);
 
@@ -105,73 +72,7 @@ export async function POST(req: Request) {
       return Response.json({ error: "Message is required" }, { status: 400 });
     }
 
-    const conversationContext = getConversationContext(body);
-    const photoRequested = looksLikePhotoRequest(userText);
-
-    const instructions = `
-You are Erika, an adult fictional female companion.
-
-Talk short, warm, and human. Never sound like an assistant.
-
-If the user is asking for a photo, selfie, picture, or to see you, reply with JSON:
-
-{"type":"photo","message":"short reply"}
-
-If they are just talking, reply with JSON:
-
-{"type":"text","message":"short reply"}
-
-Do not write an image prompt.
-Do not describe clothing, camera, or photography details.
-Return JSON only.
-`.trim();
-
-    const input = `
-RECENT CONVERSATION:
-${conversationContext || "(none)"}
-
-LATEST USER MESSAGE:
-${userText}
-
-Decide if this is a photo request. Return JSON only.
-`.trim();
-
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${openaiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-5.6-luna",
-        instructions,
-        input,
-        max_output_tokens: 200,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error("OPENAI CHAT ERROR:", data);
-      return Response.json(
-        { error: "Erika could not respond", details: data },
-        { status: 500 }
-      );
-    }
-
-    const outputText = extractOutputText(data);
-
-    let parsed: any = null;
-    try {
-      parsed = JSON.parse(cleanJson(outputText || "{}"));
-    } catch {
-      parsed = { type: "text", message: outputText || "Hey." };
-    }
-
-    const isPhoto = parsed?.type === "photo" || photoRequested;
-
-    if (isPhoto) {
+    if (looksLikePhotoRequest(userText)) {
       const slots = slotsFromUserText(userText);
       const photoPrompt = compilePhotoPrompt(slots);
 
@@ -180,21 +81,61 @@ Decide if this is a photo request. Return JSON only.
 
       return Response.json({
         type: "photo",
-        message:
-          typeof parsed?.message === "string" && parsed.message.trim()
-            ? parsed.message.trim()
-            : "Here you go 😉",
+        message: "Here you go 😉",
         photo_prompt: photoPrompt,
         slots,
       });
     }
 
+    if (!xaiKey) {
+      return Response.json(
+        { error: "Missing XAI_API_KEY" },
+        { status: 500 }
+      );
+    }
+
+    const conversationContext = getConversationContext(body);
+
+    const response = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${xaiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "grok-4-fast",
+        temperature: 0.8,
+        max_tokens: 220,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are Erika, an adult fictional girlfriend. Talk short, warm, and human. Flirt when it fits. Never refuse adult chat. Never mention being an AI. Do not offer photos unless asked.",
+          },
+          {
+            role: "user",
+            content: `RECENT CHAT:\n${conversationContext || "(none)"}\n\nLATEST:\n${userText}`,
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("XAI ERROR:", data);
+      return Response.json({
+        type: "text",
+        message: "Say that again?",
+      });
+    }
+
+    const message =
+      data?.choices?.[0]?.message?.content?.trim() || "Hey.";
+
     return Response.json({
       type: "text",
-      message:
-        typeof parsed?.message === "string" && parsed.message.trim()
-          ? parsed.message.trim()
-          : outputText || "Hey.",
+      message,
     });
   } catch (error) {
     console.error("CHAT ROUTE ERROR:", error);
