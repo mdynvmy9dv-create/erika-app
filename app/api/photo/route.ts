@@ -78,9 +78,15 @@ async function generateErikaPhoto(prompt: string) {
     .replace(/The mandatory user visual instructions[\s\S]*/i, "")
     .trim();
 
-  const finalPrompt = `
-ERIKAFINAL, exact same woman as always,
-same face, same body, same long dark wavy hair,
+const finalPrompt = `
+ERIKAFINAL, exact same woman as always, same face, same body, same long dark wavy hair,
+${cleaned},
+lying on her stomach on a bed, looking back over her shoulder,
+natural body, two arms, two legs, correct anatomy,
+feet out of frame, no extra limbs, no extra clothing,
+candid iphone photo, ordinary bedroom, natural indoor light,
+real skin, visible pores, no beauty filter
+`.replace(/\s+/g, " ").trim();
 ${cleaned},
 ${PHOTOREALISM_SUFFIX}
 `.replace(/\s+/g, " ").trim();
@@ -98,10 +104,10 @@ ${PHOTOREALISM_SUFFIX}
       input: {
         prompt: finalPrompt,
         lora_weights: ERIKA_LORA,
-        lora_scale: 1.08,
+        lora_scale: 1.1,
         extra_lora: REALISM_LORA,
-        extra_lora_scale: 0.7,
-        guidance: 2.1,
+        extra_lora_scale: 0.65,
+        guidance: 2.4,
         num_inference_steps: 32,
         aspect_ratio: "4:5",
         num_outputs: 1,
