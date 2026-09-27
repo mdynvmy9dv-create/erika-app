@@ -2,11 +2,12 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 import {
+  ERIKA,
   compilePhotoPrompt,
   photoSettings,
   slotsFromUserText,
   type PhotoSlots,
-} from "@/lib/erika";
+} from "../../../lib/erika";
 
 const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -68,14 +69,35 @@ async function waitForPrediction(prediction: any) {
   return current;
 }
 
-async function generateErikaPhoto(prompt: string, slots: PhotoSlots) {
+async function generateErikaPhoto(slots: PhotoSlots) {
   const settings = photoSettings(slots);
   const finalPrompt = compilePhotoPrompt(slots);
+  const { prompt_strength, ...replicateSettings } = settings;
 
-  console.log("USING ERIKA LORA BACKEND");
+  console.log("USING LOCKED REFERENCE");
+  console.log("REFERENCE:", ERIKA.referenceImage);
   console.log("SLOTS:", slots);
   console.log("FINAL PROMPT:", finalPrompt);
   console.log("SETTINGS:", settings);
+
+  const input: Record<string, any> = {
+    prompt: finalPrompt,
+    lora_weights: ERIKA_LORA,
+    extra_lora: REALISM_LORA,
+    ...replicateSettings,
+    num_inference_steps: 32,
+    go_fast: false,
+    megapixels: "1",
+    output_format: "jpg",
+    output_quality: 95,
+    seed: getRandomSeed(),
+    disable_safety_checker: true,
+  };
+
+  if (ERIKA.referenceImage && ERIKA.referenceImage.startsWith("http")) {
+    input.image = ERIKA.referenceImage;
+    input.prompt_strength = prompt_strength;
+  }
 
   const response = await fetch(MODEL_URL, {
     method: "POST",
@@ -83,21 +105,7 @@ async function generateErikaPhoto(prompt: string, slots: PhotoSlots) {
       Authorization: `Bearer ${REPLICATE_API_TOKEN}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      input: {
-        prompt: finalPrompt,
-        lora_weights: ERIKA_LORA,
-        extra_lora: REALISM_LORA,
-        ...settings,
-        num_inference_steps: 32,
-        go_fast: false,
-        megapixels: "1",
-        output_format: "jpg",
-        output_quality: 95,
-        seed: getRandomSeed(),
-        disable_safety_checker: true,
-      },
-    }),
+    body: JSON.stringify({ input }),
   });
 
   const prediction = await response.json();
@@ -189,8 +197,7 @@ export async function POST(request: Request) {
     let body: any = {};
     try {
       body = rawBody ? JSON.parse(rawBody) : {};
-    } catch (err) {
-      console.error("Failed to parse body:", err);
+    } catch {
       body = {};
     }
 
@@ -204,14 +211,8 @@ export async function POST(request: Request) {
 
     const prompt = typeof rawPrompt === "string" ? rawPrompt.trim() : "";
 
-    if (!prompt) {
-      return Response.json(
-        {
-          error: "No photo prompt received",
-          debug: { rawBody, parsedBody: body },
-        },
-        { status: 400 }
-      );
+    if (!prompt && !body?.slots) {
+      return Response.json({ error: "No photo prompt received" }, { status: 400 });
     }
 
     const slots: PhotoSlots =
@@ -219,7 +220,7 @@ export async function POST(request: Request) {
         ? body.slots
         : slotsFromUserText(prompt);
 
-    const imageUrl = await generateErikaPhoto(prompt, slots);
+    const imageUrl = await generateErikaPhoto(slots);
     const stored = await saveImage(imageUrl);
 
     return Response.json({
@@ -227,8 +228,7 @@ export async function POST(request: Request) {
       image: stored.publicUrl,
       imageUrl: stored.publicUrl,
       metadata: {
-        backend: "erikafinal",
-        originalPrompt: prompt,
+        backend: "erikafinal-locked",
         slots,
         storageFile: stored.fileName,
       },
