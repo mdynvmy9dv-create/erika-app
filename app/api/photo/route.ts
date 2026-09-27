@@ -1,6 +1,13 @@
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+import {
+  compilePhotoPrompt,
+  photoSettings,
+  slotsFromUserText,
+  type PhotoSlots,
+} from "@/lib/erika";
+
 const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -61,36 +68,14 @@ async function waitForPrediction(prediction: any) {
   return current;
 }
 
-async function generateErikaPhoto(prompt: string) {
-  const cleaned = prompt
-    .replace(/MANDATORY USER VISUAL INSTRUCTIONS:[\s\S]*/i, "")
-    .replace(/The mandatory user visual instructions[\s\S]*/i, "")
-    .trim();
-
-  const lower = cleaned.toLowerCase();
-
-  const clothingLock = lower.includes("panti")
-    ? "wearing only panties, bare back, no bra straps"
-    : "";
-
-  const poseLock =
-    lower.includes("stomach") || lower.includes("on your stomach")
-      ? "lying on her stomach, looking back over her shoulder, cropped at mid-thigh"
-      : "cropped at mid-thigh";
-
-  const finalPrompt = `
-ERIKAFINAL, exact same woman as always, same face, same body, same long dark wavy hair,
-${cleaned},
-${poseLock},
-${clothingLock},
-close crop from head to thighs,
-natural body, two arms, correct anatomy,
-candid iphone photo, ordinary bedroom, natural indoor light,
-real skin, visible pores
-`.replace(/\s+/g, " ").trim();
+async function generateErikaPhoto(prompt: string, slots: PhotoSlots) {
+  const settings = photoSettings(slots);
+  const finalPrompt = compilePhotoPrompt(slots);
 
   console.log("USING ERIKA LORA BACKEND");
+  console.log("SLOTS:", slots);
   console.log("FINAL PROMPT:", finalPrompt);
+  console.log("SETTINGS:", settings);
 
   const response = await fetch(MODEL_URL, {
     method: "POST",
@@ -102,13 +87,9 @@ real skin, visible pores
       input: {
         prompt: finalPrompt,
         lora_weights: ERIKA_LORA,
-        lora_scale: 1.1,
         extra_lora: REALISM_LORA,
-        extra_lora_scale: 0.40,
-        guidance: 2.1,
+        ...settings,
         num_inference_steps: 32,
-        aspect_ratio: "3:4",
-        num_outputs: 1,
         go_fast: false,
         megapixels: "1",
         output_format: "jpg",
@@ -124,7 +105,9 @@ real skin, visible pores
   if (!response.ok) {
     console.error("MODEL START ERROR:", prediction);
     throw new Error(
-      prediction?.detail || prediction?.error || "Could not start photo generation"
+      prediction?.detail ||
+        prediction?.error ||
+        "Could not start photo generation"
     );
   }
 
@@ -211,8 +194,6 @@ export async function POST(request: Request) {
       body = {};
     }
 
-    console.log("PARSED BODY:", body);
-
     const rawPrompt =
       body?.prompt ??
       body?.photo_prompt ??
@@ -223,22 +204,22 @@ export async function POST(request: Request) {
 
     const prompt = typeof rawPrompt === "string" ? rawPrompt.trim() : "";
 
-    console.log("EXTRACTED PROMPT:", prompt);
-
     if (!prompt) {
       return Response.json(
         {
           error: "No photo prompt received",
-          debug: {
-            rawBody,
-            parsedBody: body,
-          },
+          debug: { rawBody, parsedBody: body },
         },
         { status: 400 }
       );
     }
 
-    const imageUrl = await generateErikaPhoto(prompt);
+    const slots: PhotoSlots =
+      body?.slots && typeof body.slots === "object"
+        ? body.slots
+        : slotsFromUserText(prompt);
+
+    const imageUrl = await generateErikaPhoto(prompt, slots);
     const stored = await saveImage(imageUrl);
 
     return Response.json({
@@ -248,6 +229,7 @@ export async function POST(request: Request) {
       metadata: {
         backend: "erikafinal",
         originalPrompt: prompt,
+        slots,
         storageFile: stored.fileName,
       },
     });
