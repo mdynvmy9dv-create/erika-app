@@ -39,20 +39,57 @@ const MODEL_URL =
 // =====================================================
 
 const PHOTOREALISM_SUFFIX = `
-candid smartphone photo,
-iphone photo,
-natural indoor lighting,
-slightly imperfect,
-real skin texture,
+candid iphone photo,
+ordinary bedroom,
+natural indoor light,
+real skin,
 visible pores,
-uneven skin,
-natural makeup,
 no beauty filter,
 no airbrush,
-slight motion softness,
-subtle noise,
-ordinary bedroom photo
+slight noise
 `.trim();
+
+async function generateErikaPhoto(prompt: string) {
+  const cleaned = prompt
+    .replace(/MANDATORY USER VISUAL INSTRUCTIONS:[\s\S]*/i, "")
+    .replace(/The mandatory user visual instructions[\s\S]*/i, "")
+    .trim();
+
+  const finalPrompt = `
+ERIKAFINAL, exact same woman as always,
+same face, same body, same long dark wavy hair,
+${cleaned},
+${PHOTOREALISM_SUFFIX}
+`.replace(/\s+/g, " ").trim();
+
+  console.log("FINAL PROMPT:", finalPrompt);
+
+  const response = await fetch(MODEL_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${REPLICATE_API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      input: {
+        prompt: finalPrompt,
+        lora_weights: ERIKA_LORA,
+        lora_scale: 1.08,
+        extra_lora: REALISM_LORA,
+        extra_lora_scale: 0.7,
+        guidance: 2.1,
+        num_inference_steps: 32,
+        aspect_ratio: "4:5",
+        num_outputs: 1,
+        go_fast: false,
+        megapixels: "1",
+        output_format: "jpg",
+        output_quality: 95,
+        seed: getRandomSeed(),
+        disable_safety_checker: true,
+      },
+    }),
+  });
 
 // =====================================================
 // HELPERS
