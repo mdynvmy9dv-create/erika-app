@@ -104,7 +104,7 @@ real skin, visible pores
         lora_weights: ERIKA_LORA,
         lora_scale: 1.1,
         extra_lora: REALISM_LORA,
-        extra_lora_scale: 0.30,
+        extra_lora_scale: 0.40,
         guidance: 2.1,
         num_inference_steps: 32,
         aspect_ratio: "3:4",
