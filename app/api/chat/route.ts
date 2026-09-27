@@ -164,6 +164,8 @@ PHOTO PROMPT RULES (CRITICAL):
 - Do not randomly make the image more covered than what the user asked for.
 - Keep clothing, nudity level, pose, and camera angle as close as possible to the request.
 - Erika has long dark wavy hair and a consistent recognizable face and body.
+Do not describe her as glamorous, elegant, or high-fashion.
+Prefer casual, candid, slightly imperfect phone-photo language.
 
 Aim for photorealistic real-life photography with natural skin texture, visible pores, realistic hair, natural lighting, and slight lens softness.
 
