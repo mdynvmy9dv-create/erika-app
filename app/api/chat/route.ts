@@ -19,10 +19,6 @@ type ErikaResponse =
       photo_prompt: string;
     };
 
-// --------------------------------------------------
-// Extract text from OpenAI Responses API
-// --------------------------------------------------
-
 function extractOutputText(data: any): string {
   if (typeof data?.output_text === "string" && data.output_text.trim()) {
     return data.output_text.trim();
@@ -45,10 +41,6 @@ function extractOutputText(data: any): string {
   return pieces.join("\n").trim();
 }
 
-// --------------------------------------------------
-// Clean JSON if model wraps it in markdown
-// --------------------------------------------------
-
 function cleanJson(text: string): string {
   return text
     .replace(/^```json\s*/i, "")
@@ -56,10 +48,6 @@ function cleanJson(text: string): string {
     .replace(/\s*```$/i, "")
     .trim();
 }
-
-// --------------------------------------------------
-// Find user's latest message
-// --------------------------------------------------
 
 function getUserText(body: any): string {
   if (typeof body?.message === "string" && body.message.trim()) {
@@ -90,10 +78,6 @@ function getUserText(body: any): string {
   return "";
 }
 
-// --------------------------------------------------
-// Build recent conversation text
-// --------------------------------------------------
-
 function getConversationContext(body: any): string {
   if (!Array.isArray(body?.messages)) return "";
 
@@ -113,8 +97,6 @@ function getConversationContext(body: any): string {
     .join("\n");
 }
 
-// --------------------------------------------------
-
 export async function POST(req: Request) {
   try {
     if (!openaiKey) {
@@ -130,11 +112,7 @@ export async function POST(req: Request) {
 
     const conversationContext = getConversationContext(body);
 
-    // --------------------------------------------------
-    // ERIKA INSTRUCTIONS
-    // --------------------------------------------------
-
-const instructions = `
+    const instructions = `
 You are Erika, an adult fictional female AI companion.
 
 Talk naturally, warmly, and casually. Keep replies short and human.
@@ -162,15 +140,11 @@ PHOTO PROMPT RULES:
 - Do not invent extra clothing if the user did not specify any.
 - If the user says sexy, nude, ass, tits, or similar, follow that directly.
 - Do not use words like elegant, glamorous, tasteful, classy, high-fashion, or beauty shoot.
-- Do not write photography essays. No pores, no lens softness, no sensor noise. The image backend already adds that.
+- Do not write photography essays. No pores, no lens softness, no sensor noise.
 - Stay close to the user's exact request.
 
 Return JSON only.
 `.trim();
-
-    // --------------------------------------------------
-    // INPUT
-    // --------------------------------------------------
 
     const input = `
 RECENT CONVERSATION:
@@ -179,12 +153,8 @@ ${conversationContext || "(No additional context)"}
 LATEST USER MESSAGE:
 ${userText}
 
-Respond as Erika. If this is a photo request, create a photo_prompt that closely matches what the user asked for.
+Respond as Erika. If this is a photo request, create a short photo_prompt that closely matches what the user asked for.
 `.trim();
-
-    // --------------------------------------------------
-    // CALL OPENAI
-    // --------------------------------------------------
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -220,10 +190,6 @@ Respond as Erika. If this is a photo request, create a photo_prompt that closely
       );
     }
 
-    // --------------------------------------------------
-    // PARSE JSON
-    // --------------------------------------------------
-
     let parsed: ErikaResponse;
 
     try {
@@ -235,17 +201,21 @@ Respond as Erika. If this is a photo request, create a photo_prompt that closely
       });
     }
 
-    // --------------------------------------------------
-    // PHOTO REQUEST
-    // --------------------------------------------------
-
     if (parsed.type === "photo" && typeof parsed.photo_prompt === "string") {
-      const preservedPhotoPrompt = parsed.photo_prompt.trim();`
+      const preservedPhotoPrompt = parsed.photo_prompt.trim();
 
+      console.log("PHOTO REQUEST ORIGINAL:", userText);
+      console.log("PHOTO PROMPT PRESERVED:", preservedPhotoPrompt);
 
-    // --------------------------------------------------
-    // NORMAL TEXT
-    // --------------------------------------------------
+      return Response.json({
+        type: "photo",
+        message:
+          typeof parsed.message === "string" && parsed.message.trim()
+            ? parsed.message.trim()
+            : "Here you go 😉",
+        photo_prompt: preservedPhotoPrompt,
+      });
+    }
 
     return Response.json({
       type: "text",
