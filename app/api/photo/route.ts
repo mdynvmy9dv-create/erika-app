@@ -1,136 +1,38 @@
-export const runtime = "nodejs";
-export const maxDuration = 120;
+import { NextResponse } from "next/server";
+import Replicate from "replicate";
+import { createClient } from "@supabase/supabase-js";
 
-const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY;
+const replicate = new Replicate({
+  auth: process.env.REPLICATE_API_TOKEN!,
+});
 
-const BUCKET = "erika-photos";
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
-// =====================================================
-// ERIKA — ONE CHARACTER LORA ONLY
-// =====================================================
+const BUCKET = process.env.ERIKA_BUCKET || "erika-photos";
+const REFERENCE_FOLDER = process.env.ERIKA_REFERENCE_FOLDER || "references";
 
-const ERIKA_TRIGGER = "ERIKAFINAL";
-
-const ERIKA_LORA_WEIGHTS =
+// Your newly trained LoRA weights URL from Replicate training output
+const ERIKA_LORA_URL =
+  process.env.ERIKA_LORA_URL ||
   "https://replicate.delivery/xezq/eOU7OpAeaHlwoEavigAhW5vYackREGjOGY3LCyv1MwWcAeiuA/flux-lora.tar";
 
-// =====================================================
-// REALISM LORA
-// Exact direct weights URL you previously confirmed works
-// =====================================================
-
-const REALISM_LORA =
+// Realism LoRA
+const REALISM_LORA_URL =
+  process.env.REALISM_LORA_URL ||
   "https://huggingface.co/XLabs-AI/flux-RealismLora/resolve/main/lora.safetensors";
 
-// =====================================================
-// SETTINGS
-// =====================================================
+// Trigger word from your current training
+const ERIKA_TRIGGER = process.env.ERIKA_TRIGGER_WORD || "ERIKAFINAL";
 
-const ERIKA_SCALE = 1.0;
-const REALISM_SCALE = 0.55;
-const GUIDANCE = 2.2;
-const STEPS = 28;
+function buildPrompt(userPrompt?: string) {
+  const basePrompt =
+    userPrompt?.trim() ||
+    "a realistic candid photo of Erika, relaxed natural pose, casual fitted outfit, comfortable modern home setting, soft natural window light, realistic smartphone-camera framing";
 
-const REPLICATE_RUNNER =
-  "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions";
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// =====================================================
-// PHOTO ROUTE
-// =====================================================
-
-export async function POST(req: Request) {
-  try {
-    // -------------------------------------------------
-    // READ BODY SAFELY
-    // -------------------------------------------------
-
-    let body: any = {};
-
-    try {
-      body = await req.json();
-    } catch {
-      body = {};
-    }
-
-    console.log("PHOTO BODY RECEIVED:", body);
-
-    // Accept basically every field name we've used before.
-    const incomingPrompt =
-      body?.prompt ??
-      body?.photo_prompt ??
-      body?.photoPrompt ??
-      body?.message ??
-      body?.text ??
-      "";
-
-    /*
-      IMPORTANT:
-
-      Your current frontend is sometimes sending {}.
-
-      Instead of failing with 400, use a good default Erika
-      photo request. This gets the app generating again even
-      before we touch page.tsx.
-    */
-
-    const prompt =
-      typeof incomingPrompt === "string" &&
-      incomingPrompt.trim().length > 0
-        ? incomingPrompt.trim()
-        : `
-a realistic candid photo of Erika,
-relaxed natural pose,
-casual fitted outfit,
-comfortable modern home setting,
-soft natural window light,
-realistic smartphone-camera framing
-`.trim();
-
-    console.log("PROMPT USED:", prompt);
-
-    // -------------------------------------------------
-    // ENV CHECKS
-    // -------------------------------------------------
-
-    if (!REPLICATE_API_TOKEN) {
-      return Response.json(
-        {
-          error: "Missing REPLICATE_API_TOKEN",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    if (
-      !SUPABASE_URL ||
-      !SUPABASE_SERVICE_ROLE_KEY
-    ) {
-      return Response.json(
-        {
-          error:
-            "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    // =================================================
-    // BUILD FINAL PROMPT
-    // =================================================
-
-    const finalPrompt = `
-${ERIKA_TRIGGER}, ${prompt}
+  return `${ERIKA_TRIGGER}, ${basePrompt}
 
 photorealistic real-life photograph,
 realistic smartphone camera rendering,
@@ -155,401 +57,155 @@ natural depth of field,
 minor photographic imperfections,
 natural facial and body asymmetry,
 unretouched appearance,
-authentic candid photography
-`.trim();
+authentic candid photography`;
+}
 
+async function getRandomReferenceImageUrl() {
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .list(REFERENCE_FOLDER, {
+      limit: 100,
+      sortBy: { column: "name", order: "asc" },
+    });
+
+  if (error) {
+    console.error("SUPABASE LIST ERROR:", error);
+    return null;
+  }
+
+  const validFiles = (data || []).filter((file) => {
+    const name = file.name.toLowerCase();
+    return (
+      !file.name.startsWith(".") &&
+      (name.endsWith(".jpg") ||
+        name.endsWith(".jpeg") ||
+        name.endsWith(".png") ||
+        name.endsWith(".webp"))
+    );
+  });
+
+  if (!validFiles.length) {
+    console.error("No reference files found in Supabase references folder.");
+    return null;
+  }
+
+  const randomFile =
+    validFiles[Math.floor(Math.random() * validFiles.length)];
+
+  const path = `${REFERENCE_FOLDER}/${randomFile.name}`;
+
+  const { data: publicData } = supabase.storage
+    .from(BUCKET)
+    .getPublicUrl(path);
+
+  console.log("RANDOM REFERENCE CHOSEN:", path);
+  return publicData.publicUrl;
+}
+
+function extractImageUrl(output: any): string | null {
+  if (!output) return null;
+
+  if (typeof output === "string") {
+    return output;
+  }
+
+  if (Array.isArray(output) && output.length > 0) {
+    if (typeof output[0] === "string") return output[0];
+    if (output[0]?.url) return output[0].url;
+  }
+
+  if (output?.url) return output.url;
+
+  return null;
+}
+
+export async function POST(request: Request) {
+  try {
+    const rawBody = await request.text();
+    let body: any = {};
+
+    try {
+      body = rawBody ? JSON.parse(rawBody) : {};
+    } catch (parseError) {
+      console.error("PHOTO BODY PARSE ERROR:", parseError);
+      console.error("RAW BODY:", rawBody);
+      body = {};
+    }
+
+    console.log("PHOTO BODY RECEIVED:", body);
+
+    const userPrompt =
+      typeof body.prompt === "string" ? body.prompt : "";
+
+    const finalPrompt = buildPrompt(userPrompt);
+
+    console.log("PROMPT USED:", userPrompt);
     console.log("FINAL ERIKA PROMPT:", finalPrompt);
 
-    // =================================================
-    // START REPLICATE
-    // =================================================
+    // Optional helper:
+    // If you later want a second backend that uses a random Erika reference,
+    // this is ready to go.
+    const randomReferenceUrl = await getRandomReferenceImageUrl();
 
-    const startResponse = await fetch(
-      REPLICATE_RUNNER,
-      {
-        method: "POST",
+    // Primary generation: your new LoRA + realism LoRA
+    const input = {
+      prompt: finalPrompt,
+      aspect_ratio: "4:5",
+      lora_weights: ERIKA_LORA_URL,
+      lora_scale: 1,
+      extra_lora: REALISM_LORA_URL,
+      extra_lora_scale: 0.55,
+      guidance: 2.2,
+      num_inference_steps: 28,
+      num_outputs: 1,
+      output_format: "jpg",
+      output_quality: 95,
+      megapixels: "1",
+      go_fast: false,
+    };
 
-        headers: {
-          Authorization:
-            `Bearer ${REPLICATE_API_TOKEN}`,
+    const output = await replicate.run(
+      "black-forest-labs/flux-dev-lora",
+      { input }
+    );
 
-          "Content-Type":
-            "application/json",
-        },
+    const image = extractImageUrl(output);
 
-        body: JSON.stringify({
-          input: {
-            // Prompt
+    if (!image) {
+      console.error("PHOTO OUTPUT EMPTY:", output);
+      return NextResponse.json(
+        {
+          error: "No image returned from model.",
+          metadata: {
             prompt: finalPrompt,
-
-            // Erika
-            lora_weights:
-              ERIKA_LORA_WEIGHTS,
-
-            lora_scale:
-              ERIKA_SCALE,
-
-            // Realism
-            extra_lora:
-              REALISM_LORA,
-
-            extra_lora_scale:
-              REALISM_SCALE,
-
-            // Rendering
-            guidance:
-              GUIDANCE,
-
-            num_inference_steps:
-              STEPS,
-
-            aspect_ratio:
-              "4:5",
-
-            num_outputs:
-              1,
-
-            go_fast:
-              false,
-
-            megapixels:
-              "1",
-
-            output_format:
-              "jpg",
-
-            output_quality:
-              95,
+            reference_used: randomReferenceUrl,
           },
-        }),
-      }
-    );
-
-    let prediction =
-      await startResponse.json();
-
-    if (!startResponse.ok) {
-      console.error(
-        "REPLICATE START ERROR:",
-        prediction
-      );
-
-      return Response.json(
-        {
-          error:
-            "Replicate could not start the photo",
-          details:
-            prediction,
         },
-        {
-          status: 500,
-        }
+        { status: 500 }
       );
     }
 
-    console.log(
-      "PREDICTION:",
-      prediction.id,
-      prediction.status
-    );
+    console.log("PHOTO SUCCESS:", image);
 
-    // =================================================
-    // POLL
-    // =================================================
-
-    let attempts = 0;
-
-    while (
-      prediction.status !== "succeeded" &&
-      prediction.status !== "failed" &&
-      prediction.status !== "canceled" &&
-      attempts < 100
-    ) {
-      await sleep(1000);
-
-      attempts++;
-
-      const pollResponse = await fetch(
-        `https://api.replicate.com/v1/predictions/${prediction.id}`,
-        {
-          headers: {
-            Authorization:
-              `Bearer ${REPLICATE_API_TOKEN}`,
-          },
-
-          cache: "no-store",
-        }
-      );
-
-      const pollData =
-        await pollResponse.json();
-
-      if (!pollResponse.ok) {
-        console.error(
-          "REPLICATE POLL ERROR:",
-          pollData
-        );
-
-        return Response.json(
-          {
-            error:
-              "Could not check photo status",
-            details:
-              pollData,
-          },
-          {
-            status: 500,
-          }
-        );
-      }
-
-      prediction = pollData;
-
-      console.log(
-        "PHOTO STATUS:",
-        prediction.status
-      );
-    }
-
-    // =================================================
-    // FAILURE
-    // =================================================
-
-    if (prediction.status === "failed") {
-      console.error(
-        "PHOTO FAILED:",
-        prediction
-      );
-
-      return Response.json(
-        {
-          error:
-            prediction.error ||
-            "Photo generation failed",
-
-          predictionId:
-            prediction.id,
-
-          details:
-            prediction,
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    if (prediction.status === "canceled") {
-      return Response.json(
-        {
-          error:
-            "Photo generation was canceled",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    if (prediction.status !== "succeeded") {
-      return Response.json(
-        {
-          error:
-            "Photo generation timed out",
-
-          predictionId:
-            prediction.id,
-
-          status:
-            prediction.status,
-        },
-        {
-          status: 504,
-        }
-      );
-    }
-
-    // =================================================
-    // GET IMAGE URL
-    // =================================================
-
-    const outputUrl =
-      Array.isArray(prediction.output)
-        ? prediction.output[0]
-        : prediction.output;
-
-    if (
-      !outputUrl ||
-      typeof outputUrl !== "string"
-    ) {
-      return Response.json(
-        {
-          error:
-            "Replicate returned no image",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    console.log(
-      "REPLICATE IMAGE URL:",
-      outputUrl
-    );
-
-    // =================================================
-    // DOWNLOAD IMAGE
-    // =================================================
-
-    const imageResponse =
-      await fetch(outputUrl);
-
-    if (!imageResponse.ok) {
-      const errorText =
-        await imageResponse.text();
-
-      console.error(
-        "IMAGE DOWNLOAD ERROR:",
-        errorText
-      );
-
-      return Response.json(
-        {
-          error:
-            "Could not download generated image",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    const imageBytes =
-      await imageResponse.arrayBuffer();
-
-    // =================================================
-    // SAVE TO SUPABASE
-    // =================================================
-
-    const fileName =
-      `erika-${Date.now()}-${crypto.randomUUID()}.jpg`;
-
-    const uploadResponse = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${fileName}`,
-      {
-        method: "POST",
-
-        headers: {
-          apikey:
-            SUPABASE_SERVICE_ROLE_KEY,
-
-          Authorization:
-            `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-
-          "Content-Type":
-            "image/jpeg",
-
-          "x-upsert":
-            "false",
-        },
-
-        body:
-          imageBytes,
-      }
-    );
-
-    if (!uploadResponse.ok) {
-      const uploadError =
-        await uploadResponse.text();
-
-      console.error(
-        "SUPABASE ERROR:",
-        uploadError
-      );
-
-      return Response.json(
-        {
-          error:
-            "Photo generated but could not be saved",
-
-          details:
-            uploadError,
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    // =================================================
-    // PERMANENT IMAGE URL
-    // =================================================
-
-    const publicUrl =
-      `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${fileName}`;
-
-    // =================================================
-    // SUCCESS
-    // =================================================
-
-    return Response.json({
-      type:
-        "photo",
-
-      image:
-        publicUrl,
-
-      imageUrl:
-        publicUrl,
-
-      prompt:
-        prompt,
-
+    return NextResponse.json({
+      image,
       metadata: {
-        predictionId:
-          prediction.id,
-
-        trigger:
-          ERIKA_TRIGGER,
-
-        erikaScale:
-          ERIKA_SCALE,
-
-        realismScale:
-          REALISM_SCALE,
-
-        guidance:
-          GUIDANCE,
-
-        steps:
-          STEPS,
-
-        usedFallbackPrompt:
-          !incomingPrompt ||
-          typeof incomingPrompt !== "string" ||
-          incomingPrompt.trim().length === 0,
-
-        storageFile:
-          fileName,
+        prompt: finalPrompt,
+        model: "black-forest-labs/flux-dev-lora",
+        lora: ERIKA_LORA_URL,
+        realism_lora: REALISM_LORA_URL,
+        reference_used: randomReferenceUrl,
       },
     });
-  } catch (error) {
-    console.error(
-      "PHOTO ROUTE ERROR:",
-      error
-    );
+  } catch (error: any) {
+    console.error("PHOTO FAILED:", error);
 
-    return Response.json(
+    return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Unknown photo generation error",
+          error?.message || "Photo generation failed.",
       },
-      {
-        status: 500,
-      }
+      { status: 500 }
     );
   }
 }
