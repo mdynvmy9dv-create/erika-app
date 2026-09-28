@@ -30,6 +30,13 @@ export type StatePatch = Partial<
   >
 >;
 
+export type DiaryEntry = {
+  id: number;
+  summary: string;
+  outfit: string;
+  created_at: string;
+};
+
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
@@ -111,7 +118,7 @@ export function clothingLine(state: ErikaState) {
     return `only ${state.underwear}`;
   }
   if (!state.top && state.bottom) {
-    return `${state.bottom}, no top, ${state.underwear || "bare chest"}`;
+    return `${state.bottom}, no top, no bra, ${state.underwear || "bare chest"}`;
   }
 
   const parts: string[] = [];
@@ -142,9 +149,7 @@ export function patchFromUserText(text: string): StatePatch {
   const t = text.toLowerCase();
   const patch: StatePatch = {};
 
-  if (
-    /(take|remove).*(shirt|top)|shirt off|top off|take it off/i.test(t)
-  ) {
+  if (/(take|remove).*(shirt|top)|shirt off|top off|take it off/i.test(t)) {
     patch.top = null;
   }
 
@@ -219,45 +224,25 @@ export async function loadState(): Promise<ErikaState> {
 }
 
 export async function saveState(state: ErikaState) {
-  const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/erika_state?id=eq.1`,
-    {
-      method: "PATCH",
-      headers: {
-        ...(await supabaseHeaders()),
-        Prefer: "return=representation",
-      },
-      body: JSON.stringify({
-        location: state.location,
-        top: state.top,
-        bottom: state.bottom,
-        underwear: state.underwear,
-        shoes: state.shoes,
-        pose: state.pose,
-        name_for_user: state.name_for_user,
-        last_photo_url: state.last_photo_url,
-        scene_at: state.scene_at,
-        updated_at: new Date().toISOString(),
-      }),
-    }
-  );
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/erika_state?id=eq.1`, {
+    method: "PATCH",
+    headers: {
+      ...(await supabaseHeaders()),
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify({
+      location: state.location,
+      top: state.top,
+      bottom: state.bottom,
+      underwear: state.underwear,
+      shoes: state.shoes,
+      pose: state.pose,
+      name_for_user: state.name_for_user,
+      last_photo_url: state.last_photo_url,
+      scene_at: state.scene_at,
+      updated_at: new Date().toISOString(),
+    }),
+  });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    console.error("SAVE STATE ERROR:", errorText);
-    throw new Error("Could not save Erika state");
-  }
-}
-
-export async function loadOrResetState(): Promise<ErikaState> {
-  let state = await loadState();
-
-  if (sceneIsStale(state)) {
-    const preset = presetForNow();
-    state = applyPatch(state, preset);
-    await saveState(state);
-    console.log("CLOCK DRESSED ERIKA:", clothingLine(state));
-  }
-
-  return state;
-}
+    const errorText = await response
