@@ -2,123 +2,262 @@ export const ERIKA = {
   trigger: "ERIKAFINAL",
   name: "Erika",
   identity:
-    "ERIKAFINAL woman, exact same woman as always, same face, same body, long dark wavy hair, brown eyes",
-  settingDefault: "ordinary bedroom",
-  referenceImage:
-    "https://kkrmnmmpfnyhrpuyzosb.supabase.co/storage/v1/object/public/erika-photos/references/IMG_3827.jpeg",
+    "ERIKAFINAL woman, one woman only, exact same woman as always, same face, same body, long dark wavy hair, brown eyes",
+  room:
+    "ordinary bedroom, beige wall, wood bed frame, white sheets, lamp on the right, candid iphone photo, natural indoor light, real skin",
+  timezone: "America/Los_Angeles",
+  sceneLockMs: 90 * 60 * 1000,
 };
 
-export type PhotoSlots = {
+export type ErikaState = {
+  id: number;
+  location: string;
+  top: string | null;
+  bottom: string | null;
+  underwear: string | null;
+  shoes: string | null;
   pose: string;
-  clothing: string;
-  framing: string;
-  setting: string;
+  name_for_user: string;
+  last_photo_url: string | null;
+  scene_at: string;
+  updated_at: string;
 };
 
-const HARD_POSE =
-  /behind|from behind|all fours|hands and knees|doggy|on her knees|stomach/i;
+export type StatePatch = Partial<
+  Pick<
+    ErikaState,
+    "location" | "top" | "bottom" | "underwear" | "shoes" | "pose"
+  >
+>;
 
-export function isHardPose(text: string) {
-  return HARD_POSE.test(text);
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+function hourInOregon(date = new Date()) {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: ERIKA.timezone,
+      hour: "numeric",
+      hour12: false,
+    }).format(date)
+  );
+  return hour;
 }
 
-export function slotsFromUserText(userText: string): PhotoSlots {
-  const text = userText.toLowerCase();
+export function presetForNow(date = new Date()) {
+  const hour = hourInOregon(date);
 
-  let pose = "standing facing the camera";
-  let framing = "waist-up";
-
-  if (text.includes("stomach") || text.includes("on your stomach")) {
-    pose =
-      "lying flat on her stomach on the bed, legs down on the mattress, looking back over her shoulder";
-    framing = "from head to hips";
-  } else if (
-    text.includes("all fours") ||
-    text.includes("hands and knees") ||
-    text.includes("doggy")
-  ) {
-    pose =
-      "on her hands and knees on the bed, camera behind her, head turned toward the camera";
-    framing = "full body in frame";
-  } else if (
-    text.includes("from behind") ||
-    text.includes("facing away") ||
-    text.includes("your ass")
-  ) {
-    pose = "standing with her back to the camera, looking back over her shoulder";
-    framing = "from head to thighs";
-  } else if (text.includes("sitting")) {
-    pose = "sitting on the edge of the bed facing the camera";
-    framing = "waist-up";
-  } else if (
-    text.includes("lying") ||
-    text.includes("laying") ||
-    text.includes("on your back")
-  ) {
-    pose = "lying on her back on the bed looking at the camera";
-    framing = "from head to hips";
-  }
-
-  if (text.includes("full body") || text.includes("head to toe")) {
-    framing = "full body in frame";
-  }
-
-  let clothing = "casual indoor clothes";
-  if (
-    text.includes("nude") ||
-    text.includes("naked") ||
-    text.includes("nothing on")
-  ) {
-    clothing = "nude";
-  } else if (text.includes("panti")) {
-    clothing = "only panties, bare back";
-  } else if (text.includes("jeans")) {
-    clothing = "light wash jeans and a simple top";
-  } else if (text.includes("dress")) {
-    clothing = "a simple cute dress";
-  } else if (text.includes("tank")) {
-    clothing = "a thin tank top and panties";
-  } else if (text.includes("lingerie") || text.includes("sexy")) {
-    clothing = "simple lingerie";
-  }
-
-  return {
-    pose,
-    clothing,
-    framing,
-    setting: ERIKA.settingDefault,
-  };
-}
-
-export function compilePhotoPrompt(slots: PhotoSlots) {
-  return [
-    ERIKA.identity,
-    slots.pose,
-    `wearing ${slots.clothing}`,
-    slots.framing,
-    slots.setting,
-    "candid iphone photo, natural indoor light, real skin",
-  ].join(", ");
-}
-
-export function photoSettings(slots: PhotoSlots) {
-  if (isHardPose(`${slots.pose} ${slots.framing}`)) {
+  if (hour >= 7 && hour < 10) {
     return {
-      lora_scale: 0.75,
-      extra_lora_scale: 0.3,
-      guidance: 2.2,
-      aspect_ratio: "3:4",
-      num_outputs: 1,
-      prompt_strength: 0.92,
+      top: "oversized white t-shirt",
+      bottom: null as string | null,
+      underwear: "grey panties",
+      shoes: null as string | null,
+      pose: "sitting on the bed",
+      location: "bedroom",
+    };
+  }
+
+  if (hour >= 10 && hour < 18) {
+    return {
+      top: "white tank top",
+      bottom: "light blue jeans",
+      underwear: "grey panties",
+      shoes: null as string | null,
+      pose: "standing facing the camera",
+      location: "bedroom",
+    };
+  }
+
+  if (hour >= 18 && hour < 23) {
+    return {
+      top: "soft tank top",
+      bottom: null as string | null,
+      underwear: "grey panties",
+      shoes: null as string | null,
+      pose: "sitting on the bed",
+      location: "bedroom",
     };
   }
 
   return {
+    top: null as string | null,
+    bottom: null as string | null,
+    underwear: "grey panties",
+    shoes: null as string | null,
+    pose: "lying on the bed",
+    location: "bedroom",
+  };
+}
+
+export function sceneIsStale(state: ErikaState, now = Date.now()) {
+  const sceneAt = new Date(state.scene_at).getTime();
+  if (Number.isNaN(sceneAt)) return true;
+  return now - sceneAt > ERIKA.sceneLockMs;
+}
+
+export function applyPatch(state: ErikaState, patch: StatePatch): ErikaState {
+  return {
+    ...state,
+    ...patch,
+    scene_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function clothingLine(state: ErikaState) {
+  if (!state.top && !state.bottom && !state.underwear) return "nude";
+  if (!state.top && !state.bottom && state.underwear) {
+    return `only ${state.underwear}`;
+  }
+  if (!state.top && state.bottom) {
+    return `${state.bottom}, no top, ${state.underwear || "bare chest"}`;
+  }
+
+  const parts: string[] = [];
+  if (state.top) parts.push(state.top);
+  if (state.bottom) parts.push(state.bottom);
+  if (state.underwear && (!state.top || !state.bottom)) {
+    parts.push(state.underwear);
+  }
+  if (state.shoes) parts.push(state.shoes);
+  return parts.join(" and ");
+}
+
+export function compilePhotoPromptFromState(state: ErikaState) {
+  return [
+    ERIKA.identity,
+    "single person, no second woman",
+    state.pose || "standing facing the camera",
+    `wearing ${clothingLine(state)}`,
+    ERIKA.room,
+  ].join(", ");
+}
+
+export function looksLikePhotoRequest(text: string) {
+  return /(photo|pic|picture|selfie|send me|show me|let me see)/i.test(text);
+}
+
+export function patchFromUserText(text: string): StatePatch {
+  const t = text.toLowerCase();
+  const patch: StatePatch = {};
+
+  if (
+    /(take|remove).*(shirt|top)|shirt off|top off|take it off/i.test(t)
+  ) {
+    patch.top = null;
+  }
+
+  if (/(take|remove).*(pants|jeans)|pants off|jeans off/i.test(t)) {
+    patch.bottom = null;
+  }
+
+  if (/(naked|nude|take it all off|nothing on)/i.test(t)) {
+    patch.top = null;
+    patch.bottom = null;
+  }
+
+  if (/put on.*(jeans)|wear.*(jeans)/i.test(t)) {
+    patch.bottom = "light blue jeans";
+  }
+
+  if (/put on.*(dress)|wear.*(dress)/i.test(t)) {
+    patch.top = "a simple cute dress";
+    patch.bottom = null;
+  }
+
+  if (/put (your )?shirt on|put (your )?top on/i.test(t)) {
+    patch.top = "white tank top";
+  }
+
+  if (/sitting|sit down|sit on/i.test(t)) {
+    patch.pose = "sitting on the bed facing the camera";
+  }
+
+  if (/stand|standing/i.test(t)) {
+    patch.pose = "standing facing the camera";
+  }
+
+  return patch;
+}
+
+export function photoSettings() {
+  return {
     lora_scale: 0.85,
-    extra_lora_scale: 0.45,
+    extra_lora_scale: 0.4,
     guidance: 2.3,
     aspect_ratio: "4:5",
     num_outputs: 1,
-    prompt_strength: 0.92,
   };
+}
+
+async function supabaseHeaders() {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+  };
+}
+
+export async function loadState(): Promise<ErikaState> {
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/erika_state?id=eq.1&select=*`,
+    {
+      headers: await supabaseHeaders(),
+      cache: "no-store",
+    }
+  );
+
+  const rows = await response.json();
+
+  if (!response.ok || !Array.isArray(rows) || !rows[0]) {
+    console.error("LOAD STATE ERROR:", rows);
+    throw new Error("Could not load Erika state");
+  }
+
+  return rows[0] as ErikaState;
+}
+
+export async function saveState(state: ErikaState) {
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/erika_state?id=eq.1`,
+    {
+      method: "PATCH",
+      headers: {
+        ...(await supabaseHeaders()),
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify({
+        location: state.location,
+        top: state.top,
+        bottom: state.bottom,
+        underwear: state.underwear,
+        shoes: state.shoes,
+        pose: state.pose,
+        name_for_user: state.name_for_user,
+        last_photo_url: state.last_photo_url,
+        scene_at: state.scene_at,
+        updated_at: new Date().toISOString(),
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("SAVE STATE ERROR:", errorText);
+    throw new Error("Could not save Erika state");
+  }
+}
+
+export async function loadOrResetState(): Promise<ErikaState> {
+  let state = await loadState();
+
+  if (sceneIsStale(state)) {
+    const preset = presetForNow();
+    state = applyPatch(state, preset);
+    await saveState(state);
+    console.log("CLOCK DRESSED ERIKA:", clothingLine(state));
+  }
+
+  return state;
 }
