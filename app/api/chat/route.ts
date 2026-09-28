@@ -86,22 +86,19 @@ export async function POST(req: Request) {
     }
 
     let state = await loadOrResetState();
-    const diary = await loadDiary(8);
+    const diary = await loadDiary(12);
     const codePatch = patchFromUserText(userText);
 
     if (Object.keys(codePatch).length) {
       state = applyPatch(state, codePatch);
       await saveState(state);
-      await addDiary(`He said: "${userText}"`, clothingLine(state));
       console.log("STATE PATCHED:", codePatch);
     }
 
     const outfit = clothingLine(state);
     const wantPhoto = looksLikePhotoRequest(userText);
 
-    if (wantPhoto) {
-      await addDiary("He asked for a photo.", outfit);
-    }
+    await addDiary(`He said: "${userText}"`, outfit);
 
     if (!xaiKey) {
       if (wantPhoto) {
@@ -140,7 +137,7 @@ You are in the ${state.location}.
 You are wearing: ${outfit}.
 Never describe different clothes than that unless he just told you to change.
 Never mention being an AI.
-Use the diary if he asks what happened earlier.
+Use the diary when he asks what happened earlier. Do not invent events that are not in the diary.
 
 DIARY:
 ${formatDiary(diary)}
@@ -176,6 +173,15 @@ or
       };
     }
 
+    const reply =
+      typeof parsed?.message === "string" && parsed.message.trim()
+        ? parsed.message.trim()
+        : wantPhoto
+        ? "Here you go 😉"
+        : "Hey.";
+
+    await addDiary(`She said: "${reply}"`, outfit);
+
     const isPhoto = parsed?.type === "photo" || wantPhoto;
 
     if (isPhoto) {
@@ -185,20 +191,14 @@ or
 
       return Response.json({
         type: "photo",
-        message:
-          typeof parsed?.message === "string" && parsed.message.trim()
-            ? parsed.message.trim()
-            : "Here you go 😉",
+        message: reply,
         photo_prompt: photoPrompt,
       });
     }
 
     return Response.json({
       type: "text",
-      message:
-        typeof parsed?.message === "string" && parsed.message.trim()
-          ? parsed.message.trim()
-          : "Hey.",
+      message: reply,
     });
   } catch (error) {
     console.error("CHAT ROUTE ERROR:", error);
