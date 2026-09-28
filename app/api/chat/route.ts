@@ -201,4 +201,15 @@ or
           : "Hey.",
     });
   } catch (error) {
-    console.error("CHAT ROUTE ERROR
+    console.error("CHAT ROUTE ERROR:", error);
+    return Response.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Something went wrong talking to Erika",
+      },
+      { status: 500 }
+    );
+  }
+}
