@@ -37,6 +37,12 @@ export type DiaryEntry = {
   created_at: string;
 };
 
+export type WardrobeItem = {
+  id: number;
+  slot: "top" | "bottom" | "underwear" | "shoes";
+  name: string;
+};
+
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
@@ -145,7 +151,20 @@ export function looksLikePhotoRequest(text: string) {
   return /(photo|pic|picture|selfie|send me|show me|let me see)/i.test(text);
 }
 
-export function patchFromUserText(text: string): StatePatch {
+function guessSlot(name: string): WardrobeItem["slot"] {
+  const t = name.toLowerCase();
+  if (/(panti|underwear|thong|brief)/i.test(t)) return "underwear";
+  if (/(shoe|heel|sneaker|boot)/i.test(t)) return "shoes";
+  if (/(dress|gown)/i.test(t)) return "top";
+  if (/(jean|pant|skirt|legging)/i.test(t)) return "bottom";
+  if (/\bshorts?\b/i.test(t)) return "bottom";
+  return "top";
+}
+
+export function patchFromUserText(
+  text: string,
+  wardrobe: WardrobeItem[] = []
+): StatePatch {
   const t = text.toLowerCase();
   const patch: StatePatch = {};
 
@@ -162,17 +181,28 @@ export function patchFromUserText(text: string): StatePatch {
     patch.bottom = null;
   }
 
-  if (/put on.*(jeans)|wear.*(jeans)/i.test(t)) {
-    patch.bottom = "light blue jeans";
-  }
+  const wearMatch = t.match(
+    /(?:put on|wear|put the|wear the)\s+(?:the |your |that )?(.+)$/i
+  );
+  if (wearMatch?.[1]) {
+    const wanted = wearMatch[1].replace(/[.!?]$/, "").trim();
+    const found =
+      wardrobe.find((item) => item.name.toLowerCase().includes(wanted)) ||
+      wardrobe.find((item) => wanted.includes(item.name.toLowerCase()));
 
-  if (/put on.*(dress)|wear.*(dress)/i.test(t)) {
-    patch.top = "a simple cute dress";
-    patch.bottom = null;
-  }
-
-  if (/put (your )?shirt on|put (your )?top on/i.test(t)) {
-    patch.top = "white tank top";
+    if (found) {
+      patch[found.slot] = found.name;
+      if (found.slot === "top" && /dress/i.test(found.name)) {
+        patch.bottom = null;
+      }
+    } else if (/jeans/i.test(wanted)) {
+      patch.bottom = "light blue jeans";
+    } else if (/shirt|top|tank/i.test(wanted)) {
+      patch.top = "white tank top";
+    } else if (/dress/i.test(wanted)) {
+      patch.top = wanted;
+      patch.bottom = null;
+    }
   }
 
   if (/sitting|sit down|sit on/i.test(t)) {
@@ -184,6 +214,18 @@ export function patchFromUserText(text: string): StatePatch {
   }
 
   return patch;
+}
+
+export function giftFromUserText(
+  text: string
+): { slot: WardrobeItem["slot"]; name: string } | null {
+  const match = text.match(
+    /(?:i got you|i bought you|got you|bought you|this is for you)\s+(?:a |an |the )?(.+)$/i
+  );
+  if (!match?.[1]) return null;
+  const name = match[1].replace(/[.!?]$/, "").trim();
+  if (!name) return null;
+  return { slot: guessSlot(name), name };
 }
 
 export function photoSettings() {
@@ -264,7 +306,7 @@ export async function addDiary(summary: string, outfit: string) {
   }
 }
 
-export async function loadDiary(limit = 8): Promise<DiaryEntry[]> {
+export async function loadDiary(limit = 12): Promise<DiaryEntry[]> {
   const response = await fetch(
     `${SUPABASE_URL}/rest/v1/erika_diary?select=*&order=created_at.desc&limit=${limit}`,
     {
@@ -287,6 +329,42 @@ export function formatDiary(entries: DiaryEntry[]) {
   return entries
     .map((entry) => `- ${entry.summary} [${entry.outfit}]`)
     .join("\n");
+}
+
+export async function loadWardrobe(): Promise<WardrobeItem[]> {
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/erika_wardrobe?select=*&order=id.asc`,
+    {
+      headers: await supabaseHeaders(),
+      cache: "no-store",
+    }
+  );
+
+  const rows = await response.json();
+  if (!response.ok || !Array.isArray(rows)) {
+    console.error("WARDROBE LOAD ERROR:", rows);
+    return [];
+  }
+
+  return rows as WardrobeItem[];
+}
+
+export async function addWardrobeItem(slot: WardrobeItem["slot"], name: string) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/erika_wardrobe`, {
+    method: "POST",
+    headers: await supabaseHeaders(),
+    body: JSON.stringify({ slot, name }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("WARDROBE SAVE ERROR:", errorText);
+  }
+}
+
+export function formatWardrobe(items: WardrobeItem[]) {
+  if (!items.length) return "(empty closet)";
+  return items.map((item) => `- ${item.slot}: ${item.name}`).join("\n");
 }
 
 export async function loadOrResetState(): Promise<ErikaState> {
