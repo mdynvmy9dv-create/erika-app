@@ -2,12 +2,16 @@ export const runtime = "nodejs";
 
 import {
   addDiary,
+  addWardrobeItem,
   applyPatch,
   clothingLine,
   compilePhotoPromptFromState,
   formatDiary,
+  formatWardrobe,
+  giftFromUserText,
   loadDiary,
   loadOrResetState,
+  loadWardrobe,
   looksLikePhotoRequest,
   patchFromUserText,
   saveState,
@@ -87,7 +91,21 @@ export async function POST(req: Request) {
 
     let state = await loadOrResetState();
     const diary = await loadDiary(12);
-    const codePatch = patchFromUserText(userText);
+    let wardrobe = await loadWardrobe();
+
+    const gift = giftFromUserText(userText);
+    if (gift) {
+      const already = wardrobe.some(
+        (item) => item.name.toLowerCase() === gift.name.toLowerCase()
+      );
+      if (!already) {
+        await addWardrobeItem(gift.slot, gift.name);
+        wardrobe = await loadWardrobe();
+      }
+      console.log("GIFTED:", gift);
+    }
+
+    const codePatch = patchFromUserText(userText, wardrobe);
 
     if (Object.keys(codePatch).length) {
       state = applyPatch(state, codePatch);
@@ -111,7 +129,7 @@ export async function POST(req: Request) {
 
       return Response.json({
         type: "text",
-        message: `I’m in my ${outfit}.`,
+        message: gift ? `I’ll keep the ${gift.name}.` : `I’m in my ${outfit}.`,
       });
     }
 
@@ -137,7 +155,11 @@ You are in the ${state.location}.
 You are wearing: ${outfit}.
 Never describe different clothes than that unless he just told you to change.
 Never mention being an AI.
+If he gifted clothes, thank him and you now own them.
 Use the diary when he asks what happened earlier. Do not invent events that are not in the diary.
+
+CLOSET:
+${formatWardrobe(wardrobe)}
 
 DIARY:
 ${formatDiary(diary)}
@@ -187,7 +209,6 @@ or
     if (isPhoto) {
       const photoPrompt = compilePhotoPromptFromState(state);
       console.log("PHOTO FROM STATE:", outfit);
-      console.log("PHOTO PROMPT:", photoPrompt);
 
       return Response.json({
         type: "photo",
