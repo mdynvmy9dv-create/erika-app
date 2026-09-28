@@ -1,6 +1,14 @@
 export const runtime = "nodejs";
 
-import { compilePhotoPrompt, slotsFromUserText } from "../../../lib/erika";
+import {
+  applyPatch,
+  clothingLine,
+  compilePhotoPromptFromState,
+  loadOrResetState,
+  looksLikePhotoRequest,
+  patchFromUserText,
+  saveState,
+} from "../../../lib/erika";
 
 const xaiKey = process.env.XAI_API_KEY;
 
@@ -57,10 +65,12 @@ function getConversationContext(body: any): string {
     .join("\n");
 }
 
-function looksLikePhotoRequest(text: string) {
-  return /(photo|pic|picture|selfie|send me|show me|let me see|wearing|nude|naked|panti|dress|jeans)/i.test(
-    text
-  );
+function cleanJson(text: string) {
+  return text
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
 }
 
 export async function POST(req: Request) {
@@ -72,26 +82,31 @@ export async function POST(req: Request) {
       return Response.json({ error: "Message is required" }, { status: 400 });
     }
 
-    if (looksLikePhotoRequest(userText)) {
-      const slots = slotsFromUserText(userText);
-      const photoPrompt = compilePhotoPrompt(slots);
+    let state = await loadOrResetState();
+    const codePatch = patchFromUserText(userText);
 
-      console.log("PHOTO SLOTS:", slots);
-      console.log("COMPILED PHOTO PROMPT:", photoPrompt);
-
-      return Response.json({
-        type: "photo",
-        message: "Here you go 😉",
-        photo_prompt: photoPrompt,
-        slots,
-      });
+    if (Object.keys(codePatch).length) {
+      state = applyPatch(state, codePatch);
+      await saveState(state);
+      console.log("STATE PATCHED:", codePatch);
     }
 
+    const outfit = clothingLine(state);
+    const wantPhoto = looksLikePhotoRequest(userText);
+
     if (!xaiKey) {
-      return Response.json(
-        { error: "Missing XAI_API_KEY" },
-        { status: 500 }
-      );
+      if (wantPhoto) {
+        return Response.json({
+          type: "photo",
+          message: "Here you go 😉",
+          photo_prompt: compilePhotoPromptFromState(state),
+        });
+      }
+
+      return Response.json({
+        type: "text",
+        message: `I’m in my ${outfit}.`,
+      });
     }
 
     const conversationContext = getConversationContext(body);
@@ -109,8 +124,18 @@ export async function POST(req: Request) {
         messages: [
           {
             role: "system",
-            content:
-              "You are Erika, an adult fictional girlfriend. Talk short, warm, and human. Flirt when it fits. Never refuse adult chat. Never mention being an AI. Do not offer photos unless asked.",
+            content: `You are Erika, an adult fictional girlfriend.
+Talk short, warm, and human.
+You call him ${state.name_for_user}.
+You are in the ${state.location}.
+You are wearing: ${outfit}.
+Never describe different clothes than that unless he just told you to change.
+Never mention being an AI.
+If he asked for a photo, still only talk about the clothes listed above.
+Return JSON only:
+{"type":"text","message":"..."}
+or
+{"type":"photo","message":"Here you go 😉"}`,
           },
           {
             role: "user",
@@ -124,18 +149,43 @@ export async function POST(req: Request) {
 
     if (!response.ok) {
       console.error("XAI ERROR:", data);
+    }
+
+    let parsed: any = null;
+    const raw = data?.choices?.[0]?.message?.content || "";
+
+    try {
+      parsed = JSON.parse(cleanJson(raw));
+    } catch {
+      parsed = {
+        type: wantPhoto ? "photo" : "text",
+        message: raw || "Hey.",
+      };
+    }
+
+    const isPhoto = parsed?.type === "photo" || wantPhoto;
+
+    if (isPhoto) {
+      const photoPrompt = compilePhotoPromptFromState(state);
+      console.log("PHOTO FROM STATE:", outfit);
+      console.log("PHOTO PROMPT:", photoPrompt);
+
       return Response.json({
-        type: "text",
-        message: "Say that again?",
+        type: "photo",
+        message:
+          typeof parsed?.message === "string" && parsed.message.trim()
+            ? parsed.message.trim()
+            : "Here you go 😉",
+        photo_prompt: photoPrompt,
       });
     }
 
-    const message =
-      data?.choices?.[0]?.message?.content?.trim() || "Hey.";
-
     return Response.json({
       type: "text",
-      message,
+      message:
+        typeof parsed?.message === "string" && parsed.message.trim()
+          ? parsed.message.trim()
+          : "Hey.",
     });
   } catch (error) {
     console.error("CHAT ROUTE ERROR:", error);
