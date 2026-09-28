@@ -1,9 +1,12 @@
 export const runtime = "nodejs";
 
 import {
+  addDiary,
   applyPatch,
   clothingLine,
   compilePhotoPromptFromState,
+  formatDiary,
+  loadDiary,
   loadOrResetState,
   looksLikePhotoRequest,
   patchFromUserText,
@@ -83,16 +86,22 @@ export async function POST(req: Request) {
     }
 
     let state = await loadOrResetState();
+    const diary = await loadDiary(8);
     const codePatch = patchFromUserText(userText);
 
     if (Object.keys(codePatch).length) {
       state = applyPatch(state, codePatch);
       await saveState(state);
+      await addDiary(`He said: "${userText}"`, clothingLine(state));
       console.log("STATE PATCHED:", codePatch);
     }
 
     const outfit = clothingLine(state);
     const wantPhoto = looksLikePhotoRequest(userText);
+
+    if (wantPhoto) {
+      await addDiary("He asked for a photo.", outfit);
+    }
 
     if (!xaiKey) {
       if (wantPhoto) {
@@ -131,7 +140,11 @@ You are in the ${state.location}.
 You are wearing: ${outfit}.
 Never describe different clothes than that unless he just told you to change.
 Never mention being an AI.
-If he asked for a photo, still only talk about the clothes listed above.
+Use the diary if he asks what happened earlier.
+
+DIARY:
+${formatDiary(diary)}
+
 Return JSON only:
 {"type":"text","message":"..."}
 or
@@ -188,15 +201,4 @@ or
           : "Hey.",
     });
   } catch (error) {
-    console.error("CHAT ROUTE ERROR:", error);
-    return Response.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Something went wrong talking to Erika",
-      },
-      { status: 500 }
-    );
-  }
-}
+    console.error("CHAT ROUTE ERROR
