@@ -2,11 +2,10 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 import {
-  ERIKA,
-  compilePhotoPrompt,
+  compilePhotoPromptFromState,
+  loadOrResetState,
   photoSettings,
-  slotsFromUserText,
-  type PhotoSlots,
+  saveState,
 } from "../../../lib/erika";
 
 const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
@@ -56,12 +55,7 @@ async function waitForPrediction(prediction: any) {
     );
 
     const data = await response.json();
-
-    if (!response.ok) {
-      console.error("POLL ERROR:", data);
-      throw new Error("Could not check photo generation status");
-    }
-
+    if (!response.ok) throw new Error("Could not check photo status");
     current = data;
     console.log("PHOTO STATUS:", current.status);
   }
@@ -69,22 +63,18 @@ async function waitForPrediction(prediction: any) {
   return current;
 }
 
-async function generateErikaPhoto(slots: PhotoSlots) {
-  const settings = photoSettings(slots);
-  const finalPrompt = compilePhotoPrompt(slots);
-  const { prompt_strength, ...replicateSettings } = settings;
+async function generateErikaPhoto(prompt: string) {
+  const settings = photoSettings();
 
-  console.log("USING LOCKED REFERENCE");
-  console.log("REFERENCE:", ERIKA.referenceImage);
-  console.log("SLOTS:", slots);
-  console.log("FINAL PROMPT:", finalPrompt);
+  console.log("USING STATE PROMPT");
+  console.log("FINAL PROMPT:", prompt);
   console.log("SETTINGS:", settings);
 
-  const input: Record<string, any> = {
-    prompt: finalPrompt,
+  const input = {
+    prompt,
     lora_weights: ERIKA_LORA,
     extra_lora: REALISM_LORA,
-    ...replicateSettings,
+    ...settings,
     num_inference_steps: 32,
     go_fast: false,
     megapixels: "1",
@@ -93,11 +83,6 @@ async function generateErikaPhoto(slots: PhotoSlots) {
     seed: getRandomSeed(),
     disable_safety_checker: true,
   };
-
-  if (ERIKA.referenceImage && ERIKA.referenceImage.startsWith("http")) {
-    input.image = ERIKA.referenceImage;
-    input.prompt_strength = prompt_strength;
-  }
 
   const response = await fetch(MODEL_URL, {
     method: "POST",
@@ -112,24 +97,16 @@ async function generateErikaPhoto(slots: PhotoSlots) {
 
   if (!response.ok) {
     console.error("MODEL START ERROR:", prediction);
-    throw new Error(
-      prediction?.detail ||
-        prediction?.error ||
-        "Could not start photo generation"
-    );
+    throw new Error(prediction?.detail || "Could not start photo generation");
   }
-
-  console.log("PREDICTION ID:", prediction.id);
 
   const result = await waitForPrediction(prediction);
 
   if (result.status !== "succeeded") {
-    console.error("GENERATION FAILED:", result);
     throw new Error(result.error || "Photo generation failed");
   }
 
   const output = Array.isArray(result.output) ? result.output[0] : result.output;
-
   if (!output || typeof output !== "string") {
     throw new Error("Model returned no image URL");
   }
@@ -143,9 +120,7 @@ async function saveImage(sourceUrl: string) {
   }
 
   const imageResponse = await fetch(sourceUrl);
-  if (!imageResponse.ok) {
-    throw new Error("Could not download generated image");
-  }
+  if (!imageResponse.ok) throw new Error("Could not download generated image");
 
   const imageBytes = await imageResponse.arrayBuffer();
   const contentType = imageResponse.headers.get("content-type") || "image/jpeg";
@@ -171,8 +146,6 @@ async function saveImage(sourceUrl: string) {
   );
 
   if (!response.ok) {
-    const errorText = await response.text();
-    console.error("SUPABASE UPLOAD ERROR:", errorText);
     throw new Error("Generated photo could not be saved to storage");
   }
 
@@ -205,37 +178,32 @@ export async function POST(request: Request) {
       body?.prompt ??
       body?.photo_prompt ??
       body?.photoPrompt ??
-      body?.message ??
-      body?.text ??
       "";
 
-    const prompt = typeof rawPrompt === "string" ? rawPrompt.trim() : "";
+    const state = await loadOrResetState();
+    const prompt =
+      typeof rawPrompt === "string" && rawPrompt.trim()
+        ? rawPrompt.trim()
+        : compilePhotoPromptFromState(state);
 
-    if (!prompt && !body?.slots) {
-      return Response.json({ error: "No photo prompt received" }, { status: 400 });
-    }
-
-    const slots: PhotoSlots =
-      body?.slots && typeof body.slots === "object"
-        ? body.slots
-        : slotsFromUserText(prompt);
-
-    const imageUrl = await generateErikaPhoto(slots);
+    const imageUrl = await generateErikaPhoto(prompt);
     const stored = await saveImage(imageUrl);
+
+    state.last_photo_url = stored.publicUrl;
+    await saveState(state);
 
     return Response.json({
       type: "photo",
       image: stored.publicUrl,
       imageUrl: stored.publicUrl,
       metadata: {
-        backend: "erikafinal-locked",
-        slots,
+        backend: "state",
+        outfit: prompt,
         storageFile: stored.fileName,
       },
     });
   } catch (error) {
     console.error("PHOTO ROUTE ERROR:", error);
-
     return Response.json(
       {
         error:
